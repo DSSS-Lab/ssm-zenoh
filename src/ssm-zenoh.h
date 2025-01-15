@@ -16,6 +16,7 @@ typedef struct {
 // Structure for semaphore monitoring
 typedef struct {
     int suid;                       // shm id
+    int ssm_id;                     // ssm id
     char name[SSM_SNAME_MAX];       // shm name
     void (*callback)(zenoh_context* z_context, ssm_header* shm_p, int tid);     // Callback function to handle signals
     volatile int* active;           // Flag to indicate if the thread is active

@@ -86,7 +86,7 @@ void* semaphore_monitor(void* arg) {
     }
 
     char zenoh_key[SSM_SNAME_MAX + sizeof(int)];
-    if (snprintf(zenoh_key, sizeof(zenoh_key), "%s/%d", sem_arg->name, sem_arg->suid) < 0) {
+    if (snprintf(zenoh_key, sizeof(zenoh_key), "%s/%d", sem_arg->name, sem_arg->ssm_id) < 0) {
         printf("Failed to format Zenoh key for Shared Memory ID: %d\n", sem_arg->suid);
         return NULL;
     }
@@ -113,14 +113,16 @@ void* semaphore_monitor(void* arg) {
         sem_arg->callback(z_context, shm_p, tid_zenoh_top);
     }
 
+    z_drop(z_move(pub));
     free(sem_arg); // Free allocated memory
     return NULL;
 }
 
 // Function to monitor the message queue
 void* message_queue_monitor(void* arg) {
+    zc_init_log_from_env_or("error");
     zenoh_context* z_context = (zenoh_context*)arg;
-    ssm_msg msg;
+    ssm_zenoh_msg msg;
     pthread_t thread;
     static pthread_t thread_map[1024] = {0};
     static volatile int active_flags[1024] = {0};
@@ -139,6 +141,7 @@ void* message_queue_monitor(void* arg) {
                 // Create a thread to monitor the semaphore
                 semaphore_arg* sem_arg = static_cast<semaphore_arg *>(malloc(sizeof(semaphore_arg)));
                 sem_arg->suid = msg.suid;
+                sem_arg->ssm_id = msg.ssm_id;
                 strncpy( sem_arg->name, msg.name, SSM_SNAME_MAX );
                 sem_arg->callback = semaphore_callback;
                 sem_arg->active = (volatile int*)malloc(sizeof(int));
@@ -175,14 +178,64 @@ void* message_queue_monitor(void* arg) {
     return NULL;
 }
 
+const char* kind_to_str(z_sample_kind_t kind) {
+    switch (kind) {
+        case Z_SAMPLE_KIND_PUT:
+            return "PUT";
+        case Z_SAMPLE_KIND_DELETE:
+            return "DELETE";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+void data_handler(z_loaned_sample_t* sample, void* arg) {
+    z_view_string_t key_string;
+    z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key_string);
+
+    z_owned_string_t payload_string;
+    z_bytes_to_string(z_sample_payload(sample), &payload_string);
+
+    printf(">> [Subscriber] Received %s ('%.*s': '%.*s')", kind_to_str(z_sample_kind(sample)),
+           (int)z_string_len(z_loan(key_string)), z_string_data(z_loan(key_string)),
+           (int)z_string_len(z_loan(payload_string)), z_string_data(z_loan(payload_string)));
+
+    const z_loaned_bytes_t* attachment = z_sample_attachment(sample);
+    // checks if attachment exists
+    if (attachment != NULL) {
+        z_owned_string_t attachment_string;
+        z_bytes_to_string(attachment, &attachment_string);
+        printf(" (%.*s)", (int)z_string_len(z_loan(attachment_string)), z_string_data(z_loan(attachment_string)));
+        z_drop(z_move(attachment_string));
+    }
+    printf("\n");
+    z_drop(z_move(payload_string));
+}
+
 // Function to monitor Zenoh messages
 void* zenoh_message_monitor(void* arg) {
-    // Placeholder for Zenoh integration logic
-    // Replace with actual Zenoh message processing code
+    zc_init_log_from_env_or("error");
+    zenoh_context* z_context = (zenoh_context*)arg;
+
+    char keyexpr[] = "**";
+    z_view_keyexpr_t ke;
+    z_view_keyexpr_from_str(&ke, keyexpr);
+
+    z_owned_closure_sample_t callback;
+    z_closure(&callback, data_handler, NULL, NULL);
+    printf("Declaring Subscriber on '%s'...\n", keyexpr);
+    z_owned_subscriber_t sub;
+    if (z_declare_subscriber(z_loan(z_context->session), &sub, z_loan(ke), z_move(callback), NULL)) {
+        printf("Unable to declare subscriber.\n");
+        exit(-1);
+    }
+
     while (keep_running) {
         printf("Monitoring Zenoh messages...\n");
-        sleep(1); // Simulate waiting for Zenoh messages
+        z_sleep_s(1);
     }
+
+    z_drop(z_move(sub));
     return NULL;
 }
 
@@ -223,6 +276,8 @@ int main(int argc, char **argv) {
     // Wait for the threads to finish
     pthread_join(msg_thread, NULL);
     pthread_join(zenoh_thread, NULL);
+
+    z_drop(z_move(session));
 
     return 1;
 }
