@@ -12,7 +12,6 @@
 #include <errno.h>
 
 #include "ssm-zenoh.h"
-#include "../external/zenoh-c/include/zenoh.h"
 
 #ifdef HAVE_CONFIG_H
 #include <config.h>
@@ -55,12 +54,36 @@ int ssm_ini( void )
 
 
 // Callback function called when a semaphore is signaled
-void semaphore_callback(int suid) {
-    printf("Callback triggered for Shared Memory ID: %d\n", suid);
+void semaphore_callback(zenoh_context* z_context, int suid, char* name, int tid, ssm_header* shm_p) {
+    printf("Callback triggered for Shared Memory ID: %d, Name: %s\n", suid, name);
+
+    void *data_ptr = shm_get_data_ptr(shm_p, shm_p->tid_top);
+    // Create a Zenoh payload from the current shared memory content
+    z_owned_bytes_t payload;
+    z_bytes_copy_from_str(&payload, (char*)data_ptr);
+
+    char zenoh_key[SSM_SNAME_MAX];
+    snprintf(zenoh_key, sizeof(zenoh_key) + sizeof(int), "%s/%d", name, suid);
+
+    printf("test");
+
+    z_owned_publisher_t pub;
+    z_view_keyexpr_t ke;
+    z_view_keyexpr_from_str(&ke, zenoh_key);
+    printf("test");
+    if (z_declare_publisher(z_loan(z_context->session), &pub, z_loan(ke), NULL) < 0) {
+        printf("Unable to declare Publisher for key expression %s!\n", zenoh_key);
+        return;;
+    }
+
+    if (z_publisher_put(z_loan(pub), z_move(payload), NULL) < 0) {
+        printf("Failed to publish data for key %s!\n",zenoh_key);
+    }
 }
 
 // Function for semaphore monitoring thread
 void* semaphore_monitor(void* arg) {
+    zenoh_context* z_context = (zenoh_context*)arg;
     semaphore_arg* sem_arg = (semaphore_arg*)arg;
     ssm_header *shm_p;
 
@@ -73,7 +96,7 @@ void* semaphore_monitor(void* arg) {
         tid_zenoh_top++;
         printf("Waiting TID_TOP: %d\n", tid_zenoh_top);
         shm_cond_wait(shm_p, tid_zenoh_top);
-        sem_arg->callback(sem_arg->suid);
+        sem_arg->callback(z_context, sem_arg->suid, sem_arg->name, tid_zenoh_top, shm_p);
     }
 
     free(sem_arg); // Free allocated memory
@@ -82,6 +105,7 @@ void* semaphore_monitor(void* arg) {
 
 // Function to monitor the message queue
 void* message_queue_monitor(void* arg) {
+    zenoh_context* z_context = (zenoh_context*)arg;
     ssm_msg msg;
     pthread_t thread;
     static pthread_t thread_map[1024] = {0};
@@ -105,6 +129,7 @@ void* message_queue_monitor(void* arg) {
                 sem_arg->callback = semaphore_callback;
                 sem_arg->active = (volatile int*)malloc(sizeof(int));
                 *(sem_arg->active) = 1;
+                sem_arg->z_context = z_context;
 
                 if (pthread_create(&thread, NULL, semaphore_monitor, sem_arg) != 0) {
                     perror("Error creating thread");
@@ -115,7 +140,7 @@ void* message_queue_monitor(void* arg) {
                     thread_map[msg.suid] = thread;
                     active_flags[msg.suid] = *(sem_arg->active);
                 }
-            } else if (msg.cmd_type == MC_TERMINATE) {
+            } else if (msg.cmd_type == MC_DESTROY) {
                 // Stop the corresponding thread
                 if (thread_map[msg.suid] != 0) {
                     active_flags[msg.suid] = 0; // Signal the thread to stop
@@ -136,6 +161,17 @@ void* message_queue_monitor(void* arg) {
     return NULL;
 }
 
+// Function to monitor Zenoh messages
+void* zenoh_message_monitor(void* arg) {
+    // Placeholder for Zenoh integration logic
+    // Replace with actual Zenoh message processing code
+    while (keep_running) {
+        printf("Monitoring Zenoh messages...\n");
+        sleep(1); // Simulate waiting for Zenoh messages
+    }
+    return NULL;
+}
+
 
 int main(int argc, char **argv) {
     // Register signal handler for graceful shutdown
@@ -144,14 +180,34 @@ int main(int argc, char **argv) {
     if( !ssm_ini(  ) )
 		return -1;
 
+    // Configure Zenoh session
+    z_owned_config_t config;
+    z_config_default(&config);
+    z_owned_session_t session;
+    if (z_open(&session, z_move(config), NULL) < 0) {
+        printf("Unable to open Zenoh session!\n");
+        exit(1);
+    }
+
+    zenoh_context z_context = { .session = session };
+
+    // Start the message queue monitoring thread
     pthread_t msg_thread;
-    if (pthread_create(&msg_thread, NULL, message_queue_monitor, NULL) != 0) {
+    if (pthread_create(&msg_thread, NULL, message_queue_monitor, &z_context) != 0) {
         perror("Error creating message queue thread");
         exit(1);
     }
 
-    // Wait for the message queue thread to finish
+    // Start the Zenoh message monitoring thread
+    pthread_t zenoh_thread;
+    if (pthread_create(&zenoh_thread, NULL, zenoh_message_monitor, &z_context) != 0) {
+        perror("Error creating Zenoh message thread");
+        exit(1);
+    }
+
+    // Wait for the threads to finish
     pthread_join(msg_thread, NULL);
+    pthread_join(zenoh_thread, NULL);
 
     return 1;
 }
