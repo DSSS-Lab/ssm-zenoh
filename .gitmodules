@@ -1,0 +1,4 @@
+[submodule "external/zenoh-c"]
+	path = external/zenoh-c
+	url = https://github.com/eclipse-zenoh/zenoh-c.git
+	branch = release/1.1.0
