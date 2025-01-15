@@ -18,6 +18,7 @@ ssm
 $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 $ sudo apt install libtool
 $ source $HOME/.cargo/env
+$ (Mac) change src/Makefile.am comment out (-Wno-error=stringop-truncation -Wno-error=format-truncation= # For Linux)
 $ autoreconf -i
 $ ./configure
 $ make
