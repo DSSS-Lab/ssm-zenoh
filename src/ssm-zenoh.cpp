@@ -61,8 +61,6 @@ void semaphore_callback(zenoh_context* z_context, ssm_header* shm_p, int tid) {
         return;
     }
 
-    printf("Shared memory data pointer obtained successfully.\n");
-
     // Create a Zenoh payload from the current shared memory content
     z_owned_bytes_t payload;
     if (z_bytes_copy_from_str(&payload, (char*)data_ptr) < 0) {
@@ -87,15 +85,11 @@ void* semaphore_monitor(void* arg) {
         return NULL;
     }
 
-    printf("Zenoh payload created successfully.\n");
-
     char zenoh_key[SSM_SNAME_MAX + sizeof(int)];
     if (snprintf(zenoh_key, sizeof(zenoh_key), "%s/%d", sem_arg->name, sem_arg->suid) < 0) {
         printf("Failed to format Zenoh key for Shared Memory ID: %d\n", sem_arg->suid);
         return NULL;
     }
-
-    printf("Zenoh key generated: %s\n", zenoh_key);
 
     z_owned_publisher_t pub;
     z_view_keyexpr_t ke;
@@ -104,18 +98,12 @@ void* semaphore_monitor(void* arg) {
         return NULL;
     }
 
-    printf("Zenoh key expression created successfully.\n");
-
     if (z_declare_publisher(z_loan(z_context->session), &pub, z_loan(ke), NULL) < 0) {
         printf("Unable to declare Publisher for key expression: %s\n", zenoh_key);
         return NULL;
     }
 
-    printf("Publisher declared successfully for key: %s\n", zenoh_key);
-
     z_context->pub = pub;
-
-
     int tid_zenoh_top = shm_p->tid_top;
 
     while (keep_running) {
