@@ -10,6 +10,10 @@
 #include <sys/msg.h>
 #include <signal.h>
 #include <errno.h>
+#include <sys/types.h>
+#include <ifaddrs.h>
+#include <sys/socket.h>
+#include <netdb.h>
 
 #include "ssm-zenoh.h"
 
@@ -21,7 +25,7 @@ using namespace std;
 
 int msq_id = -1;				                /**< Message queue ID */
 int is_check_msgque = 1;						/* メッセージキューがすでに存在しているかを確認しない */
-pid_t my_pid;									/* 自分のプロセスID */
+char ipv4_address[NI_MAXHOST] = "";
 char err_msg[20];
 volatile int keep_running = 1;                 // Flag to control program termination
 
@@ -29,6 +33,43 @@ volatile int keep_running = 1;                 // Flag to control program termin
 void handle_sigint(int sig) {
     printf("\nSignal caught, shutting down...\n");
     keep_running = 0;
+}
+
+// Main function to list all IPv4 addresses
+void list_ip_addresses() {
+    struct ifaddrs *ifaddr, *ifa;
+
+    // Retrieve network interfaces and addresses
+    if (getifaddrs(&ifaddr) == -1) {
+        perror("getifaddrs");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("List of IPv4 addresses:\n");
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL)
+            continue;
+
+        // Ignore loopback interface "lo"
+        if (strcmp(ifa->ifa_name, "lo") == 0)
+            continue;
+
+        // Process only AF_INET (IPv4) addresses
+        if (ifa->ifa_addr->sa_family == AF_INET) {
+            char host[NI_MAXHOST];
+
+            // Convert the address to a readable format
+            if (getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in),
+                            host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST) == 0) {
+                printf("%s: %s\n", ifa->ifa_name, host);
+
+                // Store the last found IPv4 address in the global variable
+                strncpy(ipv4_address, host, NI_MAXHOST);
+                            }
+        }
+    }
+
+    freeifaddrs(ifaddr);
 }
 
 int ssm_ini( void )
@@ -39,7 +80,7 @@ int ssm_ini( void )
 		sprintf( err_msg, "msq open err" );
 		return 0;
 	}
-	my_pid = getpid(  );
+    list_ip_addresses();
 
 	/* 内部時刻同期変数への接続 */
 	if( !opentimeSSM() )
@@ -58,11 +99,9 @@ void semaphore_callback(zenoh_context* z_context, ssm_header* shm_p, int tid) {
     z_publisher_put_options_t options;
     z_publisher_put_options_default(&options);
 
-    char attachment_ssm[20];
-    snprintf(attachment_ssm, sizeof(my_pid), "%d", my_pid);
     z_owned_bytes_t attachment;
-    if (z_bytes_copy_from_str(&attachment, attachment_ssm) < 0) {
-        printf("Failed to create Zenoh options from attachment: %s\n", attachment_ssm);
+    if (z_bytes_copy_from_str(&attachment, ipv4_address) < 0) {
+        printf("Failed to create Zenoh options from attachment: %s\n", ipv4_address);
         return;
     }
     options.attachment = z_move(attachment);
@@ -210,16 +249,13 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
         return;
     }
 
-    char my_pid_str[20];
-    snprintf(my_pid_str, sizeof(my_pid), "%d", my_pid);
-
     z_owned_string_t attachment_string;
     z_bytes_to_string(attachment, &attachment_string);
     size_t attachment_len = z_string_len(z_loan(attachment_string));
 
-    char attachment_str[20];
-    snprintf(attachment_str, 20, "%.*s", (int)attachment_len, z_string_data(z_loan(attachment_string)));
-    if (strcmp(attachment_str, my_pid_str) == 0) {
+    char attachment_ipv4_address[NI_MAXHOST];
+    snprintf(attachment_ipv4_address, NI_MAXHOST, "%.*s", (int)attachment_len, z_string_data(z_loan(attachment_string)));
+    if (strcmp(attachment_ipv4_address, ipv4_address) == 0) {
         printf("Own Shared memory\n");
         return;
     }
