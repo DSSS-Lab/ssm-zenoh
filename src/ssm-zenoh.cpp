@@ -26,6 +26,7 @@ using namespace std;
 int msq_id = -1;				                /**< Message queue ID */
 char ipv4_address[NI_MAXHOST] = "";
 pid_t my_pid;
+SSM_Zenoh_List *ssm_zenoh_top = 0;
 char err_msg[20];
 volatile int keep_running = 1;                 // Flag to control program termination
 
@@ -91,6 +92,106 @@ int ssm_zenoh_ini( void )
 
 	return 1;
 }
+
+
+SSM_Zenoh_List *add_ssm_zenoh_list( SSM_sid ssmId, char *name, int suid, size_t ssize, size_t hsize, ssmTimeT cycle )
+{
+    SSM_Zenoh_List *p, *q;
+
+    p = ( SSM_Zenoh_List * ) malloc( sizeof ( SSM_Zenoh_List ) );
+    if( !p )
+    {
+        fprintf( stderr, "ERROR  : cannot allock memory of local list\n" );
+    }
+
+    p->ssmId = ssmId;
+    strcpy( p->name, name );
+    p->suid = suid;
+    p->ssize = ssize;
+    p->hsize = hsize;
+    p->next = 0;
+    p->property = 0;
+    p->property_size = 0;
+    /* リストの最後にpを追加 */
+    if( !ssm_zenoh_top )
+    {
+        ssm_zenoh_top = p;
+    }
+    else
+    {
+        q = ssm_zenoh_top;
+        while( q->next )
+        {
+            q = q->next;
+        }
+        q->next = p;
+    }
+    return p;
+}
+
+SSM_Zenoh_List *search_ssm_zenoh_list( char *name, int suid )
+{
+    SSM_Zenoh_List *p, *pn, *pni, *pi;
+
+    p = ssm_zenoh_top;
+
+    pn = 0;
+    pni = 0;
+    pi = 0;
+    while( p )
+    {
+        if( strcmp( p->name, name ) == 0 )
+        {
+            pn = p;
+            if( p->suid == suid )
+            {
+                pni = p;
+            }
+        }
+        if( p->suid == suid )
+        {
+            pi = p;
+        }
+        p = p->next;
+    }
+
+    if( pni )
+        return pni;
+    return 0;
+}
+
+
+SSM_Zenoh_List *get_nth_ssm_zenoh_list( int n )
+{
+    SSM_Zenoh_List *p;
+    p = ssm_zenoh_top;
+
+    while( p )
+    {
+        n--;
+        if( n < 0 )
+            return p;
+        p = p->next;
+    }
+
+    p = 0;
+    return p;
+}
+
+void free_ssm_zenoh_list( SSM_Zenoh_List * ssmp )
+{
+    if( ssmp )
+    {
+        if( ssmp->next )
+            free_ssm_zenoh_list( ssmp->next );
+        if( ssmp->ssmId )
+        {
+            releaseSSM( &ssmp->ssmId );
+            printf( "%s detached\n", ssmp->name );
+        }
+    }
+}
+
 
 // Callback function called when a semaphore is signaled
 void semaphore_callback(zenoh_context* z_context, ssm_header* shm_p, int tid) {
@@ -241,6 +342,7 @@ const char* kind_to_str(z_sample_kind_t kind) {
 }
 
 void data_handler(z_loaned_sample_t* sample, void* arg) {
+    SSM_Zenoh_List *slist;
     const z_loaned_bytes_t* attachment = z_sample_attachment(sample);
 
     // checks if attachment exists
@@ -259,6 +361,7 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
 
     if (sscanf(z_string_data(z_loan(attachment_string)), "%[^;];%d;%d;%d;%lf", ipv4_zenoh_address, &ssm_zenoh_tid_top, &ssm_zenoh_size, &ssm_zenoh_num, &ssm_zenoh_cycle) != 5) {
         printf("Failed to get attachment for shared memory\n");
+        z_drop(z_move(attachment_string));
         return;
     }
 
@@ -279,20 +382,28 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
     int ssm_zenoh_suid = 0;
     if (sscanf(z_string_data(z_loan(key_string)), "%[^/]/%d", ssm_zenoh_name, &ssm_zenoh_suid) != 2) {
         printf("Failed to get topic for shared memory\n");
+        return;
     }
 
-    SSM_sid ssm_zenoh_shm = openSSM(ssm_zenoh_name, ssm_zenoh_suid, SSM_WRITE);
-    if (ssm_zenoh_shm == 0) {
-        //ssm_zenoh_shm = createSSMP();
-        printf("Topic name: %s\n", ssm_zenoh_name);
-        printf("suid = %d\n", ssm_zenoh_suid);
-    } else
-        printf("SSM ID: %s\n", ssm_zenoh_shm);
+    slist = search_ssm_zenoh_list( ssm_zenoh_name, ssm_zenoh_suid );
 
+    if( !slist ) {
+        SSM_sid ssm_zenoh_ssm_sid = openSSM(ssm_zenoh_name, ssm_zenoh_suid, SSM_WRITE);
+        if (ssm_zenoh_ssm_sid == 0) {
+            ssm_zenoh_ssm_sid = createSSMP(ssm_zenoh_name, ssm_zenoh_suid, ssm_zenoh_size, ssm_zenoh_num, ssm_zenoh_cycle);
+            printf("Topic name: %s\n", ssm_zenoh_name);
+            printf("suid = %d\n", ssm_zenoh_suid);
+        }
+        slist = add_ssm_zenoh_list( ssm_zenoh_ssm_sid, ssm_zenoh_name, ssm_zenoh_suid, ssm_zenoh_size, ssm_zenoh_num, ssm_zenoh_cycle );
+    }
 
+    // ToDo: send Time data aswell
+    ssmTimeT time = gettimeSSM(  );
 
-    z_owned_string_t payload_string;
-    //z_bytes_to_string(z_sample_payload(sample), &payload_string);
+    SSM_tid tid = writeSSM( slist->ssmId, z_sample_payload(sample), time );
+    if (tid < 0) {
+        printf("Failed to write to shared memory\n");
+    }
 
     // printf(">> [Subscriber] Received %s ('%.*s': '%.*s')", kind_to_str(z_sample_kind(sample)),
     //        (int)z_string_len(z_loan(key_string)), z_string_data(z_loan(key_string)),
@@ -300,7 +411,6 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
 
     printf("\n");
     z_drop(z_move(attachment_string));
-    z_drop(z_move(payload_string));
 }
 
 // Function to monitor Zenoh messages

@@ -23,9 +23,28 @@ typedef struct {
     zenoh_context* z_context;       // Pointer to the Zenoh context
 } semaphore_arg;
 
+typedef struct ssm_zenoh_list *SSM_Zenoh_ListPtr;
+typedef struct ssm_zenoh_list
+{
+    char ipv4_zenoh_address[NI_MAXHOST];
+    char name[SSM_SNAME_MAX];
+    int suid;
+    SSM_sid ssmId;
+    size_t ssize;
+    size_t hsize;
+    SSM_Zenoh_ListPtr next;
+    char *property;
+    int property_size;
+} SSM_Zenoh_List;
+
 /* ---- function prototypes ---- */
-int ssm_zenoh_ini( void );
 void handle_sigint(int sig);
+void list_ip_addresses();
+int ssm_zenoh_ini( void );
+SSM_Zenoh_List *add_ssm_zenoh_list( SSM_sid ssmId, char *name, int suid, size_t ssize, size_t hsize, ssmTimeT cycle );
+SSM_Zenoh_List *search_ssm_zenoh_list( char *name, int suid );
+SSM_Zenoh_List *get_nth_ssm_zenoh_list( int n );
+void free_ssm_zenoh_list( SSM_Zenoh_List * ssmp );
 void semaphore_callback(int shm_id);
 void* semaphore_monitor(void* arg);
 void* message_queue_monitor(void* arg);

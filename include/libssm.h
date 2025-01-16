@@ -130,7 +130,7 @@ extern "C"
 		char name[SSM_SNAME_MAX];				///< ストリーム名
 		int suid;								///< ID
 		int node1, node2;						///< エッジにつながっているノード
-	} __attribute__((__packed__)) ssm_msg_edge;
+	} ssm_msg_edge;
 	
 	/** 時刻同期用の構造体 */
 	struct ssmtime
