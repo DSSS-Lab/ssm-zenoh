@@ -55,6 +55,18 @@ int ssm_ini( void )
 
 // Callback function called when a semaphore is signaled
 void semaphore_callback(zenoh_context* z_context, ssm_header* shm_p, int tid) {
+    z_publisher_put_options_t options;
+    z_publisher_put_options_default(&options);
+
+    char attachment_ssm[20];
+    snprintf(attachment_ssm, sizeof(my_pid), "%d", my_pid);
+    z_owned_bytes_t attachment;
+    if (z_bytes_copy_from_str(&attachment, attachment_ssm) < 0) {
+        printf("Failed to create Zenoh options from attachment: %s\n", attachment_ssm);
+        return;
+    }
+    options.attachment = z_move(attachment);
+
     void *data_ptr = shm_get_data_ptr(shm_p, tid);
     if (data_ptr == NULL) {
         printf("Failed to get data pointer for Shared Memory\n");
@@ -68,7 +80,7 @@ void semaphore_callback(zenoh_context* z_context, ssm_header* shm_p, int tid) {
         return;
     }
 
-    if (z_publisher_put(z_loan(z_context->pub), z_move(payload), NULL) < 0) {
+    if (z_publisher_put(z_loan(z_context->pub), z_move(payload), &options) < 0) {
         printf("Failed to publish data for key\n");
     } else {
         printf("Data published successfully\n");
@@ -190,6 +202,32 @@ const char* kind_to_str(z_sample_kind_t kind) {
 }
 
 void data_handler(z_loaned_sample_t* sample, void* arg) {
+    const z_loaned_bytes_t* attachment = z_sample_attachment(sample);
+
+    // checks if attachment exists
+    if (attachment == NULL) {
+        printf("Failed to get attachment from shared memory\n");
+        return;
+    }
+
+    char my_pid_str[20];
+    snprintf(my_pid_str, sizeof(my_pid), "%d", my_pid);
+
+    z_owned_string_t attachment_string;
+    z_bytes_to_string(attachment, &attachment_string);
+    size_t attachment_len = z_string_len(z_loan(attachment_string));
+
+    char attachment_str[20];
+    snprintf(attachment_str, 20, "%.*s", (int)attachment_len, z_string_data(z_loan(attachment_string)));
+    if (strcmp(attachment_str, my_pid_str) == 0) {
+        printf("Own Shared memory\n");
+        return;
+    }
+
+    printf(" (%.*s)", (int)z_string_len(z_loan(attachment_string)), z_string_data(z_loan(attachment_string)));
+    z_drop(z_move(attachment_string));
+
+
     z_view_string_t key_string;
     z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key_string);
 
@@ -200,14 +238,6 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
            (int)z_string_len(z_loan(key_string)), z_string_data(z_loan(key_string)),
            (int)z_string_len(z_loan(payload_string)), z_string_data(z_loan(payload_string)));
 
-    const z_loaned_bytes_t* attachment = z_sample_attachment(sample);
-    // checks if attachment exists
-    if (attachment != NULL) {
-        z_owned_string_t attachment_string;
-        z_bytes_to_string(attachment, &attachment_string);
-        printf(" (%.*s)", (int)z_string_len(z_loan(attachment_string)), z_string_data(z_loan(attachment_string)));
-        z_drop(z_move(attachment_string));
-    }
     printf("\n");
     z_drop(z_move(payload_string));
 }
