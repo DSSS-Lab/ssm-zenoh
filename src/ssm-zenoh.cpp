@@ -100,7 +100,9 @@ void semaphore_callback(zenoh_context* z_context, ssm_header* shm_p, int tid) {
     z_publisher_put_options_default(&options);
 
     z_owned_bytes_t attachment;
-    if (z_bytes_copy_from_str(&attachment, ipv4_address) < 0) {
+    char attachment_str[sizeof(ipv4_address) + sizeof(int)];
+    snprintf(attachment_str, sizeof(attachment_str), "%s;%d", ipv4_address, tid);
+    if (z_bytes_copy_from_str(&attachment, attachment_str) < 0) {
         printf("Failed to create Zenoh options from attachment: %s\n", ipv4_address);
         return;
     }
@@ -136,7 +138,7 @@ void* semaphore_monitor(void* arg) {
         return NULL;
     }
 
-    char zenoh_key[SSM_SNAME_MAX + sizeof(int)];
+    char zenoh_key[SSM_SNAME_MAX + 2*sizeof(int)];
     if (snprintf(zenoh_key, sizeof(zenoh_key), "%s/%d", sem_arg->name, sem_arg->ssm_id) < 0) {
         printf("Failed to format Zenoh key for Shared Memory ID: %d\n", sem_arg->suid);
         return NULL;
@@ -249,18 +251,26 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
         return;
     }
 
+    int tid_zenoh_top = 0;
+    char ipv4_zenoh_address[NI_MAXHOST];
+
     z_owned_string_t attachment_string;
     z_bytes_to_string(attachment, &attachment_string);
     size_t attachment_len = z_string_len(z_loan(attachment_string));
 
-    char attachment_ipv4_address[NI_MAXHOST];
-    snprintf(attachment_ipv4_address, NI_MAXHOST, "%.*s", (int)attachment_len, z_string_data(z_loan(attachment_string)));
-    if (strcmp(attachment_ipv4_address, ipv4_address) == 0) {
+    char attachment_str[sizeof(ipv4_address) + sizeof(int)];
+    snprintf(attachment_str, sizeof(ipv4_address) + sizeof(int), "%.*s", (int)attachment_len, z_string_data(z_loan(attachment_string)));
+
+    if (sscanf(attachment_str, "%[^;];%d", ipv4_zenoh_address, &tid_zenoh_top) != 2) {
+        printf("Failed to get attachment from shared memory\n");
+    }
+
+    if (strcmp(ipv4_zenoh_address, ipv4_address) == 0) {
         printf("Own Shared memory\n");
         return;
     }
 
-    printf(" (%.*s)", (int)z_string_len(z_loan(attachment_string)), z_string_data(z_loan(attachment_string)));
+    printf("(%.*s) ", (int)z_string_len(z_loan(attachment_string)), z_string_data(z_loan(attachment_string)));
     z_drop(z_move(attachment_string));
 
 
