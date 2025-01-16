@@ -309,7 +309,7 @@ int endSSM( void )
 }
 
 /*------------Allocate sensor data space with time table on SSM  -----*/
-SSM_sid createSSM( const char *name, int stream_id, size_t ssm_size, ssmTimeT life, ssmTimeT cycle )
+SSM_sid createSSMP( const char *name, int stream_id, size_t ssm_size, size_t ssm_hsize, ssmTimeT cycle )
 {
 	ssm_msg msg;
 	int open_mode = SSM_READ | SSM_WRITE;
@@ -336,25 +336,6 @@ SSM_sid createSSM( const char *name, int stream_id, size_t ssm_size, ssmTimeT li
 		fprintf( stderr, "SSM ERROR : create : stream id err.\n" );
 		return 0;
 	}
-	
-	if( life <= 0.0 )
-	{
-		fprintf( stderr, "SSM ERROR : create : stream life time err.\n" );
-	}
-	
-	if( cycle <= 0.0 )
-	{
-		fprintf( stderr, "SSM ERROR : create : stream cycle err.\n" );
-		strcpy( err_msg, "arg error : cycle" );
-		return 0;
-	}
-
-	if( life < cycle )
-	{
-		fprintf( stderr, "SSM ERROR : create : stream saveTime MUST be larger than stream cycle.\n" );
-		strcpy( err_msg, "arg err : life, c" );
-		return 0;
-	}
 
 	/* prepare message packet */
 //	strncpy( msg.name, name, SSM_SNAME_MAX );
@@ -362,7 +343,7 @@ SSM_sid createSSM( const char *name, int stream_id, size_t ssm_size, ssmTimeT li
 	msg.name[ sizeof( msg.name ) - 1 ] = '\0';
 	msg.suid = stream_id;
 	msg.ssize = ssm_size;
-	msg.hsize = calcSSM_table( life, cycle ) ;	/* table size */
+	msg.hsize = ssm_hsize ;	/* table size */
 	msg.time = cycle;
 
 	/* communicate */
@@ -389,6 +370,29 @@ SSM_sid createSSM( const char *name, int stream_id, size_t ssm_size, ssmTimeT li
 
 	shm_init_time( shm_p );
 	return ( SSM_sid ) shm_p;
+}
+
+SSM_sid createSSM( const char *name, int stream_id, size_t ssm_size, ssmTimeT life, ssmTimeT cycle ) {
+	if( life <= 0.0 )
+	{
+		fprintf( stderr, "SSM ERROR : create : stream life time err.\n" );
+	}
+
+	if( cycle <= 0.0 )
+	{
+		fprintf( stderr, "SSM ERROR : create : stream cycle err.\n" );
+		strcpy( err_msg, "arg error : cycle" );
+		return 0;
+	}
+
+	if( life < cycle )
+	{
+		fprintf( stderr, "SSM ERROR : create : stream saveTime MUST be larger than stream cycle.\n" );
+		strcpy( err_msg, "arg err : life, c" );
+		return 0;
+	}
+
+	return createSSMP( name, stream_id, ssm_size, calcSSM_table( life, cycle ), cycle );
 }
 
 /**

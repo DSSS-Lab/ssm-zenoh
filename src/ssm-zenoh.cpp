@@ -24,8 +24,8 @@
 using namespace std;
 
 int msq_id = -1;				                /**< Message queue ID */
-int is_check_msgque = 1;						/* メッセージキューがすでに存在しているかを確認しない */
 char ipv4_address[NI_MAXHOST] = "";
+pid_t my_pid;
 char err_msg[20];
 volatile int keep_running = 1;                 // Flag to control program termination
 
@@ -72,7 +72,7 @@ void list_ip_addresses() {
     freeifaddrs(ifaddr);
 }
 
-int ssm_ini( void )
+int ssm_zenoh_ini( void )
 {
     /* Open message queue */
 	if( ( msq_id = msgget( ( key_t ) MSQ_KEY, 0666 ) ) < 0 )
@@ -92,16 +92,14 @@ int ssm_ini( void )
 	return 1;
 }
 
-
-
 // Callback function called when a semaphore is signaled
 void semaphore_callback(zenoh_context* z_context, ssm_header* shm_p, int tid) {
     z_publisher_put_options_t options;
     z_publisher_put_options_default(&options);
 
     z_owned_bytes_t attachment;
-    char attachment_str[sizeof(ipv4_address) + sizeof(int)];
-    snprintf(attachment_str, sizeof(attachment_str), "%s;%d", ipv4_address, tid);
+    char attachment_str[sizeof(ipv4_address) + sizeof(tid) + sizeof(shm_p->size) + sizeof(shm_p->num) + sizeof(shm_p->cycle)];
+    snprintf(attachment_str, sizeof(attachment_str), "%s;%d;%lu;%d;%f", ipv4_address, tid, shm_p->size, shm_p->num, shm_p->cycle);
     if (z_bytes_copy_from_str(&attachment, attachment_str) < 0) {
         printf("Failed to create Zenoh options from attachment: %s\n", ipv4_address);
         return;
@@ -138,7 +136,7 @@ void* semaphore_monitor(void* arg) {
         return NULL;
     }
 
-    char zenoh_key[SSM_SNAME_MAX + 2*sizeof(int)];
+    char zenoh_key[SSM_SNAME_MAX + sizeof(int)];
     if (snprintf(zenoh_key, sizeof(zenoh_key), "%s/%d", sem_arg->name, sem_arg->ssm_id) < 0) {
         printf("Failed to format Zenoh key for Shared Memory ID: %d\n", sem_arg->suid);
         return NULL;
@@ -251,18 +249,17 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
         return;
     }
 
-    int tid_zenoh_top = 0;
+    int ssm_zenoh_tid_top, ssm_zenoh_num;
     char ipv4_zenoh_address[NI_MAXHOST];
+    size_t ssm_zenoh_size;
+    double ssm_zenoh_cycle;
 
     z_owned_string_t attachment_string;
     z_bytes_to_string(attachment, &attachment_string);
-    size_t attachment_len = z_string_len(z_loan(attachment_string));
 
-    char attachment_str[sizeof(ipv4_address) + sizeof(int)];
-    snprintf(attachment_str, sizeof(ipv4_address) + sizeof(int), "%.*s", (int)attachment_len, z_string_data(z_loan(attachment_string)));
-
-    if (sscanf(attachment_str, "%[^;];%d", ipv4_zenoh_address, &tid_zenoh_top) != 2) {
-        printf("Failed to get attachment from shared memory\n");
+    if (sscanf(z_string_data(z_loan(attachment_string)), "%[^;];%d;%d;%d;%lf", ipv4_zenoh_address, &ssm_zenoh_tid_top, &ssm_zenoh_size, &ssm_zenoh_num, &ssm_zenoh_cycle) != 5) {
+        printf("Failed to get attachment for shared memory\n");
+        return;
     }
 
     if (strcmp(ipv4_zenoh_address, ipv4_address) == 0) {
@@ -270,21 +267,39 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
         return;
     }
 
-    printf("(%.*s) ", (int)z_string_len(z_loan(attachment_string)), z_string_data(z_loan(attachment_string)));
-    z_drop(z_move(attachment_string));
-
+    printf("Zenoh TID_TOP: %d\n", ssm_zenoh_tid_top);
+    printf("Zenoh size: %d\n", ssm_zenoh_size);
+    printf("Zenoh num: %d\n", ssm_zenoh_num);
+    printf("Zenoh cycle: %lf\n", ssm_zenoh_cycle);
 
     z_view_string_t key_string;
     z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key_string);
 
-    z_owned_string_t payload_string;
-    z_bytes_to_string(z_sample_payload(sample), &payload_string);
+    char ssm_zenoh_name[SSM_SNAME_MAX];
+    int ssm_zenoh_suid = 0;
+    if (sscanf(z_string_data(z_loan(key_string)), "%[^/]/%d", ssm_zenoh_name, &ssm_zenoh_suid) != 2) {
+        printf("Failed to get topic for shared memory\n");
+    }
 
-    printf(">> [Subscriber] Received %s ('%.*s': '%.*s')", kind_to_str(z_sample_kind(sample)),
-           (int)z_string_len(z_loan(key_string)), z_string_data(z_loan(key_string)),
-           (int)z_string_len(z_loan(payload_string)), z_string_data(z_loan(payload_string)));
+    SSM_sid ssm_zenoh_shm = openSSM(ssm_zenoh_name, ssm_zenoh_suid, SSM_WRITE);
+    if (ssm_zenoh_shm == 0) {
+        //ssm_zenoh_shm = createSSMP();
+        printf("Topic name: %s\n", ssm_zenoh_name);
+        printf("suid = %d\n", ssm_zenoh_suid);
+    } else
+        printf("SSM ID: %s\n", ssm_zenoh_shm);
+
+
+
+    z_owned_string_t payload_string;
+    //z_bytes_to_string(z_sample_payload(sample), &payload_string);
+
+    // printf(">> [Subscriber] Received %s ('%.*s': '%.*s')", kind_to_str(z_sample_kind(sample)),
+    //        (int)z_string_len(z_loan(key_string)), z_string_data(z_loan(key_string)),
+    //        (int)z_string_len(z_loan(payload_string)), z_string_data(z_loan(payload_string)));
 
     printf("\n");
+    z_drop(z_move(attachment_string));
     z_drop(z_move(payload_string));
 }
 
@@ -320,7 +335,9 @@ int main(int argc, char **argv) {
     // Register signal handler for graceful shutdown
     signal(SIGINT, handle_sigint);
 
-    if( !ssm_ini(  ) )
+    my_pid = getpid();
+
+    if( !ssm_zenoh_ini(  ) || !initSSM() )
 		return -1;
 
     // Configure Zenoh session
@@ -354,6 +371,7 @@ int main(int argc, char **argv) {
     pthread_join(zenoh_thread, NULL);
 
     z_drop(z_move(session));
+    endSSM();
 
     return 1;
 }

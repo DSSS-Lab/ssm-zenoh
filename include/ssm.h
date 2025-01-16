@@ -79,6 +79,33 @@ extern "C"
 	 * SSMの使用をやめる場合に必ず実行すること。
 	 */
 	int endSSM( void );
+
+
+	/* open */
+	/**
+	 * @brief ストリームの作成
+	 * @param[in] stream_name ストリームの名前
+	 * @param[in] stream_id 同一ストリーム名を区別するための番号
+	 * @param[in] stream_size ストリームのデータサイズ
+	 * @param[in] life ストリームの保存時間
+	 * @param[in] cycle ストリームの書き込み周期
+	 * @return SSM管理ID
+	 * @retval 0 失敗
+	 *
+	 * SSMはストリームの管理を"名前"と"番号"を使用して管理する。
+	 * 同一の機能を持つストリームは、名前を同じにし、番号を変えて管理すると分かりやすい。
+	 *
+	 * ストリームのデータサイズは、書き込む構造体（クラス）などのサイズを入れる。
+	 *
+	 * SSMは時刻同期用にリングバッファを構成する。
+	 * リングバッファの個数は、life及びcycleに従って確保される。
+	 * また、cycleは高速な時刻同期にも利用されるため、できるだけ正確に書くことが望ましい。
+	 *
+	 * 終了時には destroySSM() しなければならない。
+	 *
+	 * @see destroySSM, openSSM
+	 */
+	SSM_sid createSSMP( const char *stream_name, int stream_id, size_t stream_size, size_t stream_hsize, ssmTimeT cycle ) __attribute__ ((warn_unused_result));
 	
 	/* open */
 	/**

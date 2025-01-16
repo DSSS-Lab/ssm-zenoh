@@ -1,7 +1,7 @@
 #ifndef __SSM_ZENOH_H__
 #define __SSM_ZENOH_H__
 
-#include "ssm.h"
+//#include "ssm.h"
 #include "libssm.h"
 #include "ssm-time.h"
 
@@ -24,6 +24,7 @@ typedef struct {
 } semaphore_arg;
 
 /* ---- function prototypes ---- */
+int ssm_zenoh_ini( void );
 void handle_sigint(int sig);
 void semaphore_callback(int shm_id);
 void* semaphore_monitor(void* arg);
