@@ -297,6 +297,10 @@ void* message_queue_monitor(void* arg) {
     while (keep_running) {
         // Receive a message from the queue
         if (msgrcv(msq_id, &msg, SSM_MSG_SIZE, ZENOH_MSQ_KEY, IPC_NOWAIT) >= 0) {
+            if (msg.res_type == my_pid) {
+                continue;
+            }
+
             printf("New SHM ID received: %d\n", msg.suid);
 
             if (thread_map[msg.suid] != 0) {
