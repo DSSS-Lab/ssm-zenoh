@@ -379,9 +379,9 @@ SSM_List *get_nth_SSM_List( int n )
 int msq_loop( void )
 {
 	ssm_msg msg;
-    ssm_zenoh_msg zenoh_msg;
 	SSM_List *slist;
 	int len, num, ssm_id;
+	int ssm_zenoh_id;
 
 	while( 1 )
 	{
@@ -455,9 +455,7 @@ int msq_loop( void )
 				printf( "   |   :name=%s id=%d\n", msg.name, msg.suid );
 			}
 
-            zenoh_msg.ssm_id = msg.suid;
-			strncpy( zenoh_msg.name, msg.name, SSM_SNAME_MAX );
-            zenoh_msg.res_type = msg.res_type;
+            ssm_zenoh_id = msg.suid;
 
 			/* リストの検索 */
 			slist = search_SSM_List( msg.name, msg.suid );
@@ -494,10 +492,10 @@ int msq_loop( void )
 			if( ( msgsnd( msq_id, &msg, SSM_MSG_SIZE, 0 ) ) < 0 )
 				return 0;
 
-            zenoh_msg.suid = msg.suid;
-            zenoh_msg.msg_type = ZENOH_MSQ_KEY;
-            zenoh_msg.cmd_type = MC_CREATE;
-			if( ( msgsnd( msq_id, &zenoh_msg, SSM_MSG_SIZE, 0 ) ) < 0 ) {
+            msg.suid = ssm_zenoh_id;
+            msg.msg_type = ZENOH_MSQ_KEY;
+            msg.cmd_type = MC_CREATE;
+			if( ( msgsnd( msq_id, &msg, SSM_MSG_SIZE, 0 ) ) < 0 ) {
                 printf( "Something went wrong:%d\n", msg.suid );
 				return 0;
             }

@@ -111,16 +111,6 @@ extern "C"
 		//<-----
 		//} ssm_msg;
 	} __attribute__((__packed__)) ssm_msg;
-
-	typedef struct
-	{
-		long msg_type;							///< 宛先
-		long res_type;							///< 返信用
-		int cmd_type;							///< コマンドの種類
-		char name[SSM_SNAME_MAX];				///< ストリーム名
-		int suid;								///< ID
-        int ssm_id;
-	} __attribute__((__packed__)) ssm_zenoh_msg;
 	
 	/** SSMのエッジ取得メッセージ */
 	typedef struct

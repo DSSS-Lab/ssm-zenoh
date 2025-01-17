@@ -13,12 +13,22 @@ typedef struct {
     z_owned_publisher_t pub;
 } zenoh_context;
 
+typedef struct {
+    int tid;
+    SSM_sid ssm_sid;
+    int suid;                       // shm id
+    char name[SSM_SNAME_MAX];       // shm name
+    size_t ssize;
+    int hsize;
+    double cycle;
+    size_t property_size;
+} shm_zenoh_info;
+
 // Structure for semaphore monitoring
 typedef struct {
     int suid;                       // shm id
-    int ssm_id;                     // ssm id
     char name[SSM_SNAME_MAX];       // shm name
-    void (*callback)(zenoh_context* z_context, ssm_header* shm_p, int tid);     // Callback function to handle signals
+    void (*callback)(zenoh_context* z_context, shm_zenoh_info* shm_info);     // Callback function to handle signals
     volatile int* active;           // Flag to indicate if the thread is active
     zenoh_context* z_context;       // Pointer to the Zenoh context
 } semaphore_arg;
@@ -31,7 +41,7 @@ typedef struct ssm_zenoh_list
     int suid;
     SSM_sid ssmId;
     size_t ssize;
-    size_t hsize;
+    int hsize;
     SSM_Zenoh_ListPtr next;
     char *property;
     int property_size;
@@ -41,7 +51,7 @@ typedef struct ssm_zenoh_list
 void handle_sigint(int sig);
 void list_ip_addresses();
 int ssm_zenoh_ini( void );
-SSM_Zenoh_List *add_ssm_zenoh_list( SSM_sid ssmId, char *name, int suid, size_t ssize, size_t hsize, ssmTimeT cycle );
+SSM_Zenoh_List *add_ssm_zenoh_list( SSM_sid ssmId, char *name, int suid, size_t ssize, int hsize, ssmTimeT cycle );
 SSM_Zenoh_List *search_ssm_zenoh_list( char *name, int suid );
 SSM_Zenoh_List *get_nth_ssm_zenoh_list( int n );
 void free_ssm_zenoh_list( SSM_Zenoh_List * ssmp );

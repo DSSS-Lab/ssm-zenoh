@@ -93,8 +93,7 @@ int ssm_zenoh_ini( void )
 	return 1;
 }
 
-
-SSM_Zenoh_List *add_ssm_zenoh_list( SSM_sid ssmId, char *name, int suid, size_t ssize, size_t hsize, ssmTimeT cycle )
+SSM_Zenoh_List *add_ssm_zenoh_list( SSM_sid ssmId, char *name, int suid, size_t ssize, int hsize, ssmTimeT cycle )
 {
     SSM_Zenoh_List *p, *q;
 
@@ -160,7 +159,6 @@ SSM_Zenoh_List *search_ssm_zenoh_list( char *name, int suid )
     return 0;
 }
 
-
 SSM_Zenoh_List *get_nth_ssm_zenoh_list( int n )
 {
     SSM_Zenoh_List *p;
@@ -192,38 +190,44 @@ void free_ssm_zenoh_list( SSM_Zenoh_List * ssmp )
     }
 }
 
-
 // Callback function called when a semaphore is signaled
-void semaphore_callback(zenoh_context* z_context, ssm_header* shm_p, int tid) {
+void semaphore_callback(zenoh_context* z_context, shm_zenoh_info* shm_info) {
     z_publisher_put_options_t options;
     z_publisher_put_options_default(&options);
 
     z_owned_bytes_t attachment;
-    char attachment_str[sizeof(ipv4_address) + sizeof(tid) + sizeof(shm_p->size) + sizeof(shm_p->num) + sizeof(shm_p->cycle)];
-    snprintf(attachment_str, sizeof(attachment_str), "%s;%d;%lu;%d;%f", ipv4_address, tid, shm_p->size, shm_p->num, shm_p->cycle);
+    char attachment_str[sizeof(ipv4_address) + sizeof(shm_info->tid) + sizeof(shm_info->ssize) + sizeof(shm_info->hsize) + sizeof(shm_info->cycle)];
+    snprintf(attachment_str, sizeof(attachment_str), "%s;%d;%lu;%d;%f", ipv4_address, shm_info->tid, shm_info->ssize, shm_info->hsize, shm_info->cycle);
     if (z_bytes_copy_from_str(&attachment, attachment_str) < 0) {
         printf("Failed to create Zenoh options from attachment: %s\n", ipv4_address);
         return;
     }
     options.attachment = z_move(attachment);
 
-    void *data_ptr = shm_get_data_ptr(shm_p, tid);
-    if (data_ptr == NULL) {
-        printf("Failed to get data pointer for Shared Memory\n");
-        return;
+    void *data = malloc(shm_info->ssize);
+    ssmTimeT *ytime =static_cast<ssmTimeT *>(malloc(sizeof(ssmTimeT)));
+
+    if (readSSM(shm_info->ssm_sid, data, ytime, shm_info->tid) == 0) {
+        printf("Failed read SSM\n");
     }
 
     // Create a Zenoh payload from the current shared memory content
     z_owned_bytes_t payload;
-    if (z_bytes_copy_from_str(&payload, (char*)data_ptr) < 0) {
+    if (z_bytes_copy_from_str(&payload, (char*)data) < 0) {
         printf("Failed to create Zenoh payload from shared memory content.\n");
+        free(data);
+        free(ytime);
         return;
     }
 
     if (z_publisher_put(z_loan(z_context->pub), z_move(payload), &options) < 0) {
         printf("Failed to publish data for key\n");
+        free(data);
+        free(ytime);
     } else {
         printf("Data published successfully\n");
+        free(data);
+        free(ytime);
     }
 }
 
@@ -231,14 +235,20 @@ void semaphore_callback(zenoh_context* z_context, ssm_header* shm_p, int tid) {
 void* semaphore_monitor(void* arg) {
     semaphore_arg* sem_arg = (semaphore_arg*)arg;
     zenoh_context* z_context = sem_arg->z_context;
-    ssm_header *shm_p;
+    shm_zenoh_info* shm_info = static_cast<shm_zenoh_info *>(malloc(sizeof(shm_zenoh_info)));;
 
-    if ((shm_p = shm_open_ssm(sem_arg->suid)) == 0) {
+    SSM_sid ssm_sid = openSSM(sem_arg->name, sem_arg->suid, SSM_READ);
+    if (ssm_sid == 0) {
+        printf("Failed to open SSM ID\n");
         return NULL;
     }
 
+    strncpy( shm_info->name, sem_arg->name, SSM_SNAME_MAX );
+    shm_info->suid = sem_arg->suid;
+    shm_info->ssm_sid = ssm_sid;
+
     char zenoh_key[SSM_SNAME_MAX + sizeof(int)];
-    if (snprintf(zenoh_key, sizeof(zenoh_key), "%s/%d", sem_arg->name, sem_arg->ssm_id) < 0) {
+    if (snprintf(zenoh_key, sizeof(zenoh_key), "%s/%d", sem_arg->name, sem_arg->suid) < 0) {
         printf("Failed to format Zenoh key for Shared Memory ID: %d\n", sem_arg->suid);
         return NULL;
     }
@@ -256,17 +266,22 @@ void* semaphore_monitor(void* arg) {
     }
 
     z_context->pub = pub;
-    int tid_zenoh_top = shm_p->tid_top;
+    shm_info->tid = getTID_top(ssm_sid);
+    if (getSSM_info(sem_arg->name, sem_arg->suid, &shm_info->ssize, &shm_info->hsize, &shm_info->cycle, &shm_info->property_size) < 0) {
+        printf("ERROR: SSM read error.\n");
+        return NULL;
+    }
 
     while (keep_running) {
-        tid_zenoh_top++;
-        printf("Waiting TID_TOP: %d\n", tid_zenoh_top);
-        shm_cond_wait(shm_p, tid_zenoh_top);
-        sem_arg->callback(z_context, shm_p, tid_zenoh_top);
+        shm_info->tid++;
+        printf("Waiting TID_TOP: %d\n", shm_info->tid);
+        waitTID( ssm_sid, shm_info->tid );
+        sem_arg->callback(z_context, shm_info);
     }
 
     z_drop(z_move(pub));
     free(sem_arg); // Free allocated memory
+    free(shm_info); // Free allocated memory
     return NULL;
 }
 
@@ -274,7 +289,7 @@ void* semaphore_monitor(void* arg) {
 void* message_queue_monitor(void* arg) {
     zc_init_log_from_env_or("error");
     zenoh_context* z_context = (zenoh_context*)arg;
-    ssm_zenoh_msg msg;
+    ssm_msg msg;
     pthread_t thread;
     static pthread_t thread_map[1024] = {0};
     static volatile int active_flags[1024] = {0};
@@ -293,7 +308,6 @@ void* message_queue_monitor(void* arg) {
                 // Create a thread to monitor the semaphore
                 semaphore_arg* sem_arg = static_cast<semaphore_arg *>(malloc(sizeof(semaphore_arg)));
                 sem_arg->suid = msg.suid;
-                sem_arg->ssm_id = msg.ssm_id;
                 strncpy( sem_arg->name, msg.name, SSM_SNAME_MAX );
                 sem_arg->callback = semaphore_callback;
                 sem_arg->active = (volatile int*)malloc(sizeof(int));
@@ -439,7 +453,6 @@ void* zenoh_message_monitor(void* arg) {
     z_drop(z_move(sub));
     return NULL;
 }
-
 
 int main(int argc, char **argv) {
     // Register signal handler for graceful shutdown
