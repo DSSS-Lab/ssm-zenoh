@@ -238,13 +238,21 @@ void semaphore_callback(zenoh_context* z_context, shm_zenoh_info* shm_info) {
     }
 
     // Create a Zenoh payload from the current shared memory content
-    z_owned_bytes_t payload;
+    z_owned_bytes_t b_data, b_time;
+    z_bytes_copy_from_buf(&b_data, (uint8_t*) data, sizeof(data));
+    z_bytes_copy_from_buf(&b_time, (uint8_t*) ytime, sizeof(ssmTimeT));
+
     z_owned_bytes_writer_t writer;
     z_bytes_writer_empty(&writer);
-    z_bytes_writer_write_all(z_loan_mut(writer), (uint8_t*) data, sizeof(data));
+    z_bytes_writer_append(z_loan_mut(writer), z_move(b_data));
+    z_bytes_writer_append(z_loan_mut(writer), z_move(b_time));
+
+    z_owned_bytes_t payload;
     z_bytes_writer_finish(z_move(writer), &payload);
 
     printf("pub data size: %lu\n", sizeof((char*)data));
+    printf("pub time %lf: ", *ytime);
+    print_char_bits((char*)ytime);
     printf("pub data tid %d: ", shm_info->tid);
     print_char_bits((char*)data);
     printStruct((char*)data);
@@ -445,13 +453,34 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
     }
 
     // ToDo: send Time data aswell
-    ssmTimeT time = gettimeSSM(  );
-    uint8_t data[ssm_zenoh_size];
+    const uint8_t* time = 0;
+    const uint8_t* data = 0;
 
-    z_bytes_reader_t reader = z_bytes_get_reader(z_sample_payload(sample));
-    z_bytes_reader_read(&reader, data, sizeof(data));
+    z_bytes_slice_iterator_t slice_iter = z_bytes_get_slice_iterator(z_sample_payload(sample));
+    z_view_slice_t curr_slice;
+    int i = 0;
+    while (z_bytes_slice_iterator_next(&slice_iter, &curr_slice)) {
+        if (i == 0) {
+            data = z_slice_data(z_view_slice_loan(&curr_slice));
+        } else if (i == 1) {
+            time = z_slice_data(z_view_slice_loan(&curr_slice));
+        } else {
+            printf("Error in z_slice_data\n");
+            return;
+        }
+        i++;
+    }
+    if (data == 0 || time == 0) {
+        printf("Error reading data\n");
+        return;
+    }
+
+    ssmTimeT time_value;
+    memcpy(&time_value, time, sizeof(ssmTimeT));
 
     printf("sub data size: %lu\n", sizeof(data));
+    printf("sub time %lf: ", time_value);
+    print_char_bits((char*)&time_value);
     printf("sub data tid %d: ", ssm_zenoh_tid_top);
     print_char_bits((char*)data);
     printStruct((char*)data);
@@ -459,7 +488,7 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
     printf("test\n");
     //return;
 
-    SSM_tid tid = writeSSM( slist->ssmId, data, time );
+    SSM_tid tid = writeSSM( slist->ssmId, data, time_value );
     if (tid < 0) {
         printf("Failed to write to shared memory\n");
         return;
