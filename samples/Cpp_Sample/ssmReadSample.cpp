@@ -68,6 +68,7 @@ int main(int aArgc, char **aArgv)
 		{
 			// 出力
 			cout << "NUM = " << intSsm.data.num << endl;
+			cout << "TIME = " << intSsm.time << endl;
 		}
 		
 		//1秒前のデータを読み込みたい場合

@@ -69,7 +69,10 @@ int main(int aArgc, char **aArgv)
 		
 		//データの書き込み、現在時刻をタイムスタンプに
 		// write(ssmTimeT time) で時間指定書き込み。時間を省略すると現在時刻を書き込む．普通に使う分には何もなしでok
-		intSsm.write();	
+		intSsm.write();
+
+		cout << "NUM = " << intSsm.data.num << endl;
+		cout << "TIME = " << intSsm.time << endl;
 		
 		//ssmを使用するプログラムでは，sleepSSM(), usleepSSM() を使用することを推奨
 		//ログを再生するときに時間が飛ばないので便利．

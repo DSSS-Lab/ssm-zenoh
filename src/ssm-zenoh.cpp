@@ -464,50 +464,22 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
         slist = add_ssm_zenoh_list( ssm_zenoh_ssm_sid, ssm_zenoh_name, ssm_zenoh_suid, ssm_zenoh_size, ssm_zenoh_num, ssm_zenoh_cycle );
     }
 
-    // ToDo: send Time data aswell
-    const uint8_t* time = 0;
-    const uint8_t* data = 0;
+    uint8_t time[sizeof(ssmTimeT)];
+    uint8_t data[ssm_zenoh_size];
 
-    z_owned_slice_t slice;
-    z_bytes_to_slice(z_sample_payload(sample), &slice);
-    z_bytes_slice_iterator_t slice_iter = z_bytes_get_slice_iterator(z_sample_payload(sample));
-    z_view_slice_t curr_slice;
-    int i = 0;
-    while (z_bytes_slice_iterator_next(&slice_iter, &curr_slice)) {
-        printf("slice len: %d, slice data: '", (int)z_slice_len(z_view_slice_loan(&curr_slice)));
-        print_slice_data(&curr_slice);
-        printf("'\n");
-
-        // printf("slice len: %d, slice data: '", (int)z_slice_len(z_view_slice_loan(&curr_slice)));
-        // if (i == 0) {
-        //     data = z_slice_data(z_view_slice_loan(&curr_slice));
-        //     printf("data\n");
-        // } else if (i == 1) {
-        //     time = z_slice_data(z_view_slice_loan(&curr_slice));
-        //     printf("time\n");
-        // } else {
-        //     printf("Error in z_slice_data\n");
-        //     return;
-        // }
-        // i++;
-    }
-    if (data == 0 || time == 0) {
-        printf("Error reading data\n");
-        return;
-    }
+    z_bytes_reader_t reader = z_bytes_get_reader(z_sample_payload(sample));
+    z_bytes_reader_read(&reader, time, sizeof(ssmTimeT));
+    z_bytes_reader_read(&reader, data, sizeof(data));
 
     ssmTimeT time_value;
-    memcpy(&time_value, time, sizeof(ssmTimeT));
+    memcpy(&time_value, &time, sizeof(ssmTimeT));
 
-    printf("sub data size: %lu\n", sizeof(data));
-    printf("sub time %lf: ", time_value);
-    print_char_bits((char*)&time_value);
-    printf("sub data tid %d: ", ssm_zenoh_tid_top);
-    print_char_bits((char*)data);
-    printStruct((char*)data);
-
-    printf("test\n");
-    //return;
+    // printf("sub data size: %lu\n", sizeof(data));
+    // printf("sub time %lf: ", time_value);
+    // print_char_bits((char*)&time_value);
+    // printf("sub data tid %d: ", ssm_zenoh_tid_top);
+    // print_char_bits((char*)data);
+    // printStruct((char*)data);
 
     SSM_tid tid = writeSSM( slist->ssmId, data, time_value );
     if (tid < 0) {
