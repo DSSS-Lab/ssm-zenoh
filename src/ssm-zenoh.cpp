@@ -190,6 +190,31 @@ void free_ssm_zenoh_list( SSM_Zenoh_List * ssmp )
     }
 }
 
+void print_bits(unsigned char byte) {
+    for (int i = 7; i >= 0; i--) {
+        printf("%d", (byte >> i) & 1);
+    }
+}
+
+void print_char_bits(const char* str) {
+    while (*str) {
+        print_bits((unsigned char)*str);
+        str++;
+    }
+    printf("\n");
+}
+
+typedef struct
+{
+    int num;
+} intSsm_k;
+
+void printStruct(const char *data) {
+    // Cast das char* zurück zur Struct
+    const intSsm_k *s = (const intSsm_k *)data;
+    printf("num: %d\n", s->num);
+}
+
 // Callback function called when a semaphore is signaled
 void semaphore_callback(zenoh_context* z_context, shm_zenoh_info* shm_info) {
     z_publisher_put_options_t options;
@@ -205,7 +230,7 @@ void semaphore_callback(zenoh_context* z_context, shm_zenoh_info* shm_info) {
     options.attachment = z_move(attachment);
 
     void *data = malloc(shm_info->ssize);
-    ssmTimeT *ytime =static_cast<ssmTimeT *>(malloc(sizeof(ssmTimeT)));
+    ssmTimeT *ytime = (ssmTimeT *)(malloc(sizeof(ssmTimeT)));
 
     if (readSSM(shm_info->ssm_sid, data, ytime, shm_info->tid) == 0) {
         printf("Failed read SSM\n");
@@ -213,12 +238,18 @@ void semaphore_callback(zenoh_context* z_context, shm_zenoh_info* shm_info) {
 
     // Create a Zenoh payload from the current shared memory content
     z_owned_bytes_t payload;
-    if (z_bytes_copy_from_str(&payload, (char*)data) < 0) {
+    uint64_t* input_u64 = (uint64_t*) data;
+    if (ze_serialize_uint64(&payload, *input_u64) < 0) {
         printf("Failed to create Zenoh payload from shared memory content.\n");
         free(data);
         free(ytime);
         return;
     }
+
+    // printf("pub data size: %lu\n", sizeof((char*)data));
+    // printf("pub data tid %d: ", shm_info->tid);
+    // print_char_bits((char*)data);
+    // printStruct((char*)data);
 
     if (z_publisher_put(z_loan(z_context->pub), z_move(payload), &options) < 0) {
         printf("Failed to publish data for key\n");
@@ -388,10 +419,10 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
         return;
     }
 
-    printf("Zenoh TID_TOP: %d\n", ssm_zenoh_tid_top);
-    printf("Zenoh size: %d\n", ssm_zenoh_size);
-    printf("Zenoh num: %d\n", ssm_zenoh_num);
-    printf("Zenoh cycle: %lf\n", ssm_zenoh_cycle);
+    // printf("Zenoh TID_TOP: %d\n", ssm_zenoh_tid_top);
+    // printf("Zenoh size: %d\n", ssm_zenoh_size);
+    // printf("Zenoh num: %d\n", ssm_zenoh_num);
+    // printf("Zenoh cycle: %lf\n", ssm_zenoh_cycle);
 
     z_view_string_t key_string;
     z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key_string);
@@ -418,10 +449,20 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
     // ToDo: send Time data aswell
     ssmTimeT time = gettimeSSM(  );
 
-    SSM_tid tid = writeSSM( slist->ssmId, z_sample_payload(sample), time );
-    if (tid < 0) {
-        printf("Failed to write to shared memory\n");
+    uint64_t output_u64 = 0;
+    if (ze_deserialize_uint64(z_sample_payload(sample), &output_u64) < 0) {
+        printf("Failed to deserialize payload\n");
     }
+
+    // printf("sub data size: %lu\n", sizeof((char*)output_u64));
+    // printf("sub data tid %d: ", ssm_zenoh_tid_top);
+    // print_char_bits((char*)output_u64);
+    // printStruct((char*)output_u64);
+
+    SSM_tid tid = writeSSM( slist->ssmId, (char*)output_u64, time );
+     if (tid < 0) {
+         printf("Failed to write to shared memory\n");
+     }
 
     // printf(">> [Subscriber] Received %s ('%.*s': '%.*s')", kind_to_str(z_sample_kind(sample)),
     //        (int)z_string_len(z_loan(key_string)), z_string_data(z_loan(key_string)),
