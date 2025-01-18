@@ -54,13 +54,13 @@ ssm_zenoh_CXXFLAGS = $(AM_CXXFLAGS)
 ssm_zenoh_LDFLAGS = $(AM_LDFLAGS) -Wl,-rpath,'$$ORIGIN/../../external/zenoh-c/target/release'
 ssm_zenoh_LDADD = libssm.la -lzenohc
 
+# Ensure libzenohc.so is installed in /usr/local/lib
+install-exec-hook:
+	mkdir -p $(DESTDIR)/usr/local/lib
+	cp $(top_srcdir)/external/zenoh-c/target/release/libzenohc.so $(DESTDIR)/usr/local/lib/
+	ldconfig
 
-bin_PROGRAMS += ssm-zenoh-test
-
-ssm_zenoh_test: build-zenoh libssm.la
-
-ssm_zenoh_test_SOURCES = ssm-zenoh-test.cpp
-ssm_zenoh_test_CFLAGS = $(AM_CFLAGS)
-ssm_zenoh_test_CXXFLAGS = $(AM_CXXFLAGS)
-ssm_zenoh_test_LDFLAGS = $(AM_LDFLAGS) -Wl,-rpath,'$$ORIGIN/../../external/zenoh-c/target/release'
-ssm_zenoh_test_LDADD = libssm.la -lzenohc
+# Ensure libzenohc.so is removed on uninstall
+uninstall-hook:
+	rm -f $(DESTDIR)/usr/local/lib/libzenohc.so
+	ldconfig
