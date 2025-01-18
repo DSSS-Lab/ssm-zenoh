@@ -459,7 +459,7 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
     printf("test\n");
     //return;
 
-    SSM_tid tid = writeSSM( slist->ssmId, (char*)output_u64, time );
+    SSM_tid tid = writeSSM( slist->ssmId, data, time );
     if (tid < 0) {
         printf("Failed to write to shared memory\n");
         return;
