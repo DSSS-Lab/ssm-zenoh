@@ -67,8 +67,8 @@ int main(int aArgc, char **aArgv)
 		if(intSsm.readNew())
 		{
 			// 出力
-			cout << "NUM = " << intSsm.data.num << endl;
-			cout << "TIME = " << intSsm.time << endl;
+			printf("NUM = %d\n", intSsm.data.num);
+			printf("TIME = %.7f\n", intSsm.time);
 		}
 		
 		//1秒前のデータを読み込みたい場合
