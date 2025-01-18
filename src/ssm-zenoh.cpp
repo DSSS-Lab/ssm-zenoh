@@ -238,24 +238,30 @@ void semaphore_callback(zenoh_context* z_context, shm_zenoh_info* shm_info) {
     }
 
     // Create a Zenoh payload from the current shared memory content
-    z_owned_bytes_t b_data, b_time;
-    z_bytes_copy_from_buf(&b_data, (uint8_t*) data, sizeof(data));
+    z_owned_bytes_t b_time, b_data;
     z_bytes_copy_from_buf(&b_time, (uint8_t*) ytime, sizeof(ssmTimeT));
+    z_bytes_copy_from_buf(&b_data, (uint8_t*) data, sizeof(data));
 
     z_owned_bytes_writer_t writer;
     z_bytes_writer_empty(&writer);
-    z_bytes_writer_append(z_loan_mut(writer), z_move(b_data));
-    z_bytes_writer_append(z_loan_mut(writer), z_move(b_time));
+    if (z_bytes_writer_append(z_loan_mut(writer), z_move(b_time)) < 0) {
+        printf("Failed z_bytes_writer_append\n");
+        return;
+    }
+    if (z_bytes_writer_append(z_loan_mut(writer), z_move(b_data)) < 0) {
+        printf("Failed z_bytes_writer_append\n");
+        return;
+    }
 
     z_owned_bytes_t payload;
     z_bytes_writer_finish(z_move(writer), &payload);
 
-    printf("pub data size: %lu\n", sizeof((char*)data));
-    printf("pub time %lf: ", *ytime);
-    print_char_bits((char*)ytime);
-    printf("pub data tid %d: ", shm_info->tid);
-    print_char_bits((char*)data);
-    printStruct((char*)data);
+    // printf("pub data size: %lu\n", sizeof((char*)data));
+    // printf("pub time %lf: ", *ytime);
+    // print_char_bits((char*)ytime);
+    // printf("pub data tid %d: ", shm_info->tid);
+    // print_char_bits((char*)data);
+    // printStruct((char*)data);
 
     if (z_publisher_put(z_loan(z_context->pub), z_move(payload), &options) < 0) {
         printf("Failed to publish data for key\n");
@@ -396,6 +402,12 @@ const char* kind_to_str(z_sample_kind_t kind) {
     }
 }
 
+void print_slice_data(z_view_slice_t *slice) {
+    for (size_t i = 0; i < z_slice_len(z_view_slice_loan(slice)); i++) {
+        printf("0x%02x ", z_slice_data(z_view_slice_loan(slice))[i]);
+    }
+}
+
 void data_handler(z_loaned_sample_t* sample, void* arg) {
     SSM_Zenoh_List *slist;
     const z_loaned_bytes_t* attachment = z_sample_attachment(sample);
@@ -456,19 +468,28 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
     const uint8_t* time = 0;
     const uint8_t* data = 0;
 
+    z_owned_slice_t slice;
+    z_bytes_to_slice(z_sample_payload(sample), &slice);
     z_bytes_slice_iterator_t slice_iter = z_bytes_get_slice_iterator(z_sample_payload(sample));
     z_view_slice_t curr_slice;
     int i = 0;
     while (z_bytes_slice_iterator_next(&slice_iter, &curr_slice)) {
-        if (i == 0) {
-            data = z_slice_data(z_view_slice_loan(&curr_slice));
-        } else if (i == 1) {
-            time = z_slice_data(z_view_slice_loan(&curr_slice));
-        } else {
-            printf("Error in z_slice_data\n");
-            return;
-        }
-        i++;
+        printf("slice len: %d, slice data: '", (int)z_slice_len(z_view_slice_loan(&curr_slice)));
+        print_slice_data(&curr_slice);
+        printf("'\n");
+
+        // printf("slice len: %d, slice data: '", (int)z_slice_len(z_view_slice_loan(&curr_slice)));
+        // if (i == 0) {
+        //     data = z_slice_data(z_view_slice_loan(&curr_slice));
+        //     printf("data\n");
+        // } else if (i == 1) {
+        //     time = z_slice_data(z_view_slice_loan(&curr_slice));
+        //     printf("time\n");
+        // } else {
+        //     printf("Error in z_slice_data\n");
+        //     return;
+        // }
+        // i++;
     }
     if (data == 0 || time == 0) {
         printf("Error reading data\n");
