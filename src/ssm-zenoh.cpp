@@ -205,17 +205,6 @@ void print_char_bits(const char* str) {
     printf("\n");
 }
 
-typedef struct
-{
-    int num;
-} intSsm_k;
-
-void printStruct(const char *data) {
-    // Cast das char* zurück zur Struct
-    const intSsm_k *s = (const intSsm_k *)data;
-    printf("num: %d\n", s->num);
-}
-
 // Callback function called when a semaphore is signaled
 void semaphore_callback(zenoh_context* z_context, shm_zenoh_info* shm_info) {
     z_publisher_put_options_t options;
@@ -256,13 +245,6 @@ void semaphore_callback(zenoh_context* z_context, shm_zenoh_info* shm_info) {
     z_owned_bytes_t payload;
     z_bytes_writer_finish(z_move(writer), &payload);
 
-    // printf("pub data size: %lu\n", sizeof((char*)data));
-    // printf("pub time %lf: ", *ytime);
-    // print_char_bits((char*)ytime);
-    // printf("pub data tid %d: ", shm_info->tid);
-    // print_char_bits((char*)data);
-    // printStruct((char*)data);
-
     if (z_publisher_put(z_loan(z_context->pub), z_move(payload), &options) < 0) {
         printf("Failed to publish data for key\n");
         free(data);
@@ -278,7 +260,7 @@ void semaphore_callback(zenoh_context* z_context, shm_zenoh_info* shm_info) {
 void* semaphore_monitor(void* arg) {
     semaphore_arg* sem_arg = (semaphore_arg*)arg;
     zenoh_context* z_context = sem_arg->z_context;
-    shm_zenoh_info* shm_info = static_cast<shm_zenoh_info *>(malloc(sizeof(shm_zenoh_info)));;
+    shm_zenoh_info* shm_info = (shm_zenoh_info *)(malloc(sizeof(shm_zenoh_info)));;
 
     SSM_sid ssm_sid = openSSM(sem_arg->name, sem_arg->suid, SSM_READ);
     if (ssm_sid == 0) {
@@ -290,19 +272,19 @@ void* semaphore_monitor(void* arg) {
     shm_info->suid = sem_arg->suid;
     shm_info->ssm_sid = ssm_sid;
 
-    char zenoh_key[SSM_SNAME_MAX + sizeof(int)];
-    if (snprintf(zenoh_key, sizeof(zenoh_key), "%s/%d", sem_arg->name, sem_arg->suid) < 0) {
+    char zenoh_key[5 + SSM_SNAME_MAX + sizeof(int)];
+    if (snprintf(zenoh_key, sizeof(zenoh_key), "data/%s/%d", sem_arg->name, sem_arg->suid) < 0) {
         printf("Failed to format Zenoh key for Shared Memory ID: %d\n", sem_arg->suid);
         return NULL;
     }
 
-    z_owned_publisher_t pub;
     z_view_keyexpr_t ke;
     if (z_view_keyexpr_from_str(&ke, zenoh_key) < 0) {
         printf("Failed to create Zenoh key expression from key: %s\n", zenoh_key);
         return NULL;
     }
 
+    z_owned_publisher_t pub;
     if (z_declare_publisher(z_loan(z_context->session), &pub, z_loan(ke), NULL) < 0) {
         printf("Unable to declare Publisher for key expression: %s\n", zenoh_key);
         return NULL;
@@ -316,6 +298,10 @@ void* semaphore_monitor(void* arg) {
     }
 
     while (keep_running) {
+        if (sem_arg->active == 0) {
+            printf("test\n");
+            break;
+        }
         shm_info->tid++;
         printf("Waiting TID_TOP: %d\n", shm_info->tid);
         waitTID( ssm_sid, shm_info->tid );
@@ -346,14 +332,13 @@ void* message_queue_monitor(void* arg) {
 
             printf("New SHM ID received: %d\n", msg.suid);
 
-            if (thread_map[msg.suid] != 0) {
-                printf("Semaphore ID %d is already being monitored.\n", msg.suid);
-                continue;
-            }
-
             if (msg.cmd_type == MC_CREATE) {
+                if (thread_map[msg.suid] != 0) {
+                    printf("Semaphore ID %d is already being monitored.\n", msg.suid);
+                    continue;
+                }
                 // Create a thread to monitor the semaphore
-                semaphore_arg* sem_arg = static_cast<semaphore_arg *>(malloc(sizeof(semaphore_arg)));
+                semaphore_arg* sem_arg = (semaphore_arg *)(malloc(sizeof(semaphore_arg)));
                 sem_arg->suid = msg.suid;
                 strncpy( sem_arg->name, msg.name, SSM_SNAME_MAX );
                 sem_arg->callback = semaphore_callback;
@@ -370,6 +355,65 @@ void* message_queue_monitor(void* arg) {
                     thread_map[msg.suid] = thread;
                     active_flags[msg.suid] = *(sem_arg->active);
                 }
+            } else if (msg.cmd_type == MC_STREAM_PROPERTY_SET) {
+                void *property = malloc(msg.ssize);
+                if (get_propertySSM(msg.name, msg.suid, property) == 0) {
+                    printf("Failed to get property from shared memory\n");
+                    free(property);
+                    continue;
+                }
+
+                char zenoh_property_key[9 + SSM_SNAME_MAX + sizeof(int)];
+                if (snprintf(zenoh_property_key, sizeof(zenoh_property_key), "property/%s/%d", msg.name, msg.suid) < 0) {
+                    printf("Failed to format Zenoh key for Property: %d\n", msg.suid);
+                    free(property);
+                    continue;
+                }
+
+                z_view_keyexpr_t property_ke;
+                if (z_view_keyexpr_from_str(&property_ke, zenoh_property_key) < 0) {
+                    printf("Failed to create Zenoh key expression from key: %s\n", zenoh_property_key);
+                    free(property);
+                    continue;
+                }
+
+                z_put_options_t property_options;
+                z_put_options_default(&property_options);
+                z_owned_bytes_t attachment;
+                if (z_bytes_copy_from_str(&attachment, ipv4_address) < 0) {
+                    printf("Failed to create Zenoh options from attachment: %s\n", ipv4_address);
+                    continue;
+                }
+                property_options.attachment = z_move(attachment);
+
+                // Create a Zenoh payload from the current shared memory content
+                z_owned_bytes_t b_property_size, b_property;
+                z_bytes_copy_from_buf(&b_property_size, (uint8_t*) &msg.ssize, sizeof(size_t));
+                z_bytes_copy_from_buf(&b_property, (uint8_t*) property, sizeof(property));
+
+                z_owned_bytes_writer_t property_writer;
+                z_bytes_writer_empty(&property_writer);
+                if (z_bytes_writer_append(z_loan_mut(property_writer), z_move(b_property_size)) < 0) {
+                    printf("Failed z_bytes_writer_append\n");
+                    free(property);
+                    continue;
+                }
+                if (z_bytes_writer_append(z_loan_mut(property_writer), z_move(b_property)) < 0) {
+                    printf("Failed z_bytes_writer_append\n");
+                    free(property);
+                    continue;
+                }
+
+                z_owned_bytes_t payload;
+                z_bytes_writer_finish(z_move(property_writer), &payload);
+
+                if (z_put(z_loan(z_context->session), z_loan(property_ke), z_move(payload), &property_options) < 0) {
+                    printf("Failed put property\n");
+                    free(property);
+                    continue;
+                }
+                printf("Stream property set successfully.\n");
+                free(property);
             } else if (msg.cmd_type == MC_DESTROY) {
                 // Stop the corresponding thread
                 if (thread_map[msg.suid] != 0) {
@@ -437,17 +481,12 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
         return;
     }
 
-    // printf("Zenoh TID_TOP: %d\n", ssm_zenoh_tid_top);
-    // printf("Zenoh size: %d\n", ssm_zenoh_size);
-    // printf("Zenoh num: %d\n", ssm_zenoh_num);
-    // printf("Zenoh cycle: %lf\n", ssm_zenoh_cycle);
-
     z_view_string_t key_string;
     z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key_string);
 
     char ssm_zenoh_name[SSM_SNAME_MAX];
     int ssm_zenoh_suid = 0;
-    if (sscanf(z_string_data(z_loan(key_string)), "%[^/]/%d", ssm_zenoh_name, &ssm_zenoh_suid) != 2) {
+    if (sscanf(z_string_data(z_loan(key_string)), "data/%[^/]/%d", ssm_zenoh_name, &ssm_zenoh_suid) != 2) {
         printf("Failed to get topic for shared memory\n");
         return;
     }
@@ -474,41 +513,99 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
     ssmTimeT time_value;
     memcpy(&time_value, &time, sizeof(ssmTimeT));
 
-    // printf("sub data size: %lu\n", sizeof(data));
-    // printf("sub time %lf: ", time_value);
-    // print_char_bits((char*)&time_value);
-    // printf("sub data tid %d: ", ssm_zenoh_tid_top);
-    // print_char_bits((char*)data);
-    // printStruct((char*)data);
-
     SSM_tid tid = writeSSM( slist->ssmId, data, time_value );
     if (tid < 0) {
         printf("Failed to write to shared memory\n");
         return;
     }
 
-    // printf(">> [Subscriber] Received %s ('%.*s': '%.*s')", kind_to_str(z_sample_kind(sample)),
-    //        (int)z_string_len(z_loan(key_string)), z_string_data(z_loan(key_string)),
-    //        (int)z_string_len(z_loan(payload_string)), z_string_data(z_loan(payload_string)));
+    printf("\n");
+    z_drop(z_move(attachment_string));
+}
+
+void property_handler(z_loaned_sample_t* sample, void* arg) {
+    SSM_Zenoh_List *slist;
+    const z_loaned_bytes_t* property_attachment = z_sample_attachment(sample);
+
+    // checks if attachment exists
+    if (property_attachment == NULL) {
+        printf("Failed to get attachment for property\n");
+        return;
+    }
+
+    z_owned_string_t attachment_string;
+    z_bytes_to_string(property_attachment, &attachment_string);
+    const char* ipv4_zenoh_address = z_string_data(z_loan(attachment_string));
+
+    if (strcmp(ipv4_zenoh_address, ipv4_address) == 0) {
+        printf("Own Property\n");
+        return;
+    }
+
+    z_view_string_t key_string;
+    z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key_string);
+
+    char ssm_zenoh_property_name[SSM_SNAME_MAX];
+    int ssm_zenoh_property_suid = 0;
+    if (sscanf(z_string_data(z_loan(key_string)), "property/%[^/]/%d", ssm_zenoh_property_name, &ssm_zenoh_property_suid) != 2) {
+        printf("Failed to get topic for shared memory\n");
+        return;
+    }
+
+    slist = search_ssm_zenoh_list( ssm_zenoh_property_name, ssm_zenoh_property_suid );
+
+    if( !slist ) {
+        printf("There is no shared memory for the property");
+        return;
+    }
+
+    uint8_t property_size[sizeof(size_t)];
+
+    z_bytes_reader_t reader = z_bytes_get_reader(z_sample_payload(sample));
+    z_bytes_reader_read(&reader, property_size, sizeof(size_t));
+    size_t property_size_value;
+    memcpy(&property_size_value, &property_size, sizeof(size_t));
+
+    uint8_t property[property_size_value];
+    z_bytes_reader_read(&reader, property, sizeof(property));
+
+    if (set_propertySSM(ssm_zenoh_property_name, ssm_zenoh_property_suid, property, property_size_value) == 0) {
+        printf("Failed to set property\n");
+        return;
+    }
 
     printf("\n");
     z_drop(z_move(attachment_string));
 }
+
 
 // Function to monitor Zenoh messages
 void* zenoh_message_monitor(void* arg) {
     zc_init_log_from_env_or("error");
     zenoh_context* z_context = (zenoh_context*)arg;
 
-    char keyexpr[] = "**";
-    z_view_keyexpr_t ke;
-    z_view_keyexpr_from_str(&ke, keyexpr);
+    char data_keyexpr[] = "data/**";
+    z_view_keyexpr_t data_ke;
+    z_view_keyexpr_from_str(&data_ke, data_keyexpr);
 
-    z_owned_closure_sample_t callback;
-    z_closure(&callback, data_handler, NULL, NULL);
-    printf("Declaring Subscriber on '%s'...\n", keyexpr);
-    z_owned_subscriber_t sub;
-    if (z_declare_subscriber(z_loan(z_context->session), &sub, z_loan(ke), z_move(callback), NULL)) {
+    z_owned_closure_sample_t data_callback;
+    z_closure(&data_callback, data_handler, NULL, NULL);
+    printf("Declaring Subscriber on '%s'...\n", data_keyexpr);
+    z_owned_subscriber_t data_sub;
+    if (z_declare_subscriber(z_loan(z_context->session), &data_sub, z_loan(data_ke), z_move(data_callback), NULL)) {
+        printf("Unable to declare subscriber.\n");
+        exit(-1);
+    }
+
+    char property_keyexpr[] = "property/**";
+    z_view_keyexpr_t property_ke;
+    z_view_keyexpr_from_str(&property_ke, property_keyexpr);
+
+    z_owned_closure_sample_t property_callback;
+    z_closure(&property_callback, property_handler, NULL, NULL);
+    printf("Declaring Subscriber on '%s'...\n", property_keyexpr);
+    z_owned_subscriber_t property_sub;
+    if (z_declare_subscriber(z_loan(z_context->session), &property_sub, z_loan(property_ke), z_move(property_callback), NULL)) {
         printf("Unable to declare subscriber.\n");
         exit(-1);
     }
@@ -518,7 +615,8 @@ void* zenoh_message_monitor(void* arg) {
         z_sleep_s(1);
     }
 
-    z_drop(z_move(sub));
+    z_drop(z_move(data_sub));
+    // z_drop(z_move(property_sub));
     return NULL;
 }
 

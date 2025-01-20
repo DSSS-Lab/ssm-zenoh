@@ -668,6 +668,11 @@ int msq_loop( void )
 						return 0;
 					/* データを読み込む */
 					msgrcv( msq_id, ( char * )slist->property, slist->property_size, msg.res_type, 0 );
+
+					msg.msg_type = ZENOH_MSQ_KEY;
+					msg.cmd_type = MC_STREAM_PROPERTY_SET;
+					if( ( msgsnd( msq_id, &msg, SSM_MSG_SIZE, 0 ) ) < 0 )
+						return 0;
 				}
 				else
 				{
