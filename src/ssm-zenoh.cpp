@@ -93,7 +93,7 @@ int ssm_zenoh_ini( void )
 	return 1;
 }
 
-SSM_Zenoh_List *add_ssm_zenoh_list( SSM_sid ssmId, char *name, int suid, size_t ssize, int hsize, ssmTimeT cycle )
+SSM_Zenoh_List *add_ssm_zenoh_list( SSM_sid ssmId, char *name, int suid, size_t ssize, int hsize, ssmTimeT cycle, int extern_node )
 {
     SSM_Zenoh_List *p, *q;
 
@@ -111,6 +111,8 @@ SSM_Zenoh_List *add_ssm_zenoh_list( SSM_sid ssmId, char *name, int suid, size_t 
     p->next = 0;
     p->property = 0;
     p->property_size = 0;
+    p->cycle = cycle;
+    p->extern_node = extern_node;
     /* リストの最後にpを追加 */
     if( !ssm_zenoh_top )
     {
@@ -206,7 +208,7 @@ void print_char_bits(const char* str) {
 }
 
 // Callback function called when a semaphore is signaled
-void semaphore_callback(zenoh_context* z_context, shm_zenoh_info* shm_info) {
+void semaphore_callback(zenoh_context* z_context, SSM_Zenoh_List* shm_info) {
     z_publisher_put_options_t options;
     z_publisher_put_options_default(&options);
 
@@ -221,8 +223,7 @@ void semaphore_callback(zenoh_context* z_context, shm_zenoh_info* shm_info) {
 
     void *data = malloc(shm_info->ssize);
     ssmTimeT *ytime = (ssmTimeT *)(malloc(sizeof(ssmTimeT)));
-
-    if (readSSM(shm_info->ssm_sid, data, ytime, shm_info->tid) == 0) {
+    if (readSSM(shm_info->ssmId, data, ytime, shm_info->tid) == 0) {
         printf("Failed read SSM\n");
     }
 
@@ -258,19 +259,15 @@ void semaphore_callback(zenoh_context* z_context, shm_zenoh_info* shm_info) {
 
 // Function for semaphore monitoring thread
 void* semaphore_monitor(void* arg) {
+    SSM_Zenoh_List *slist = (SSM_Zenoh_List*) arg;
     semaphore_arg* sem_arg = (semaphore_arg*)arg;
     zenoh_context* z_context = sem_arg->z_context;
-    shm_zenoh_info* shm_info = (shm_zenoh_info *)(malloc(sizeof(shm_zenoh_info)));;
 
     SSM_sid ssm_sid = openSSM(sem_arg->name, sem_arg->suid, SSM_READ);
     if (ssm_sid == 0) {
         printf("Failed to open SSM ID\n");
         return NULL;
     }
-
-    strncpy( shm_info->name, sem_arg->name, SSM_SNAME_MAX );
-    shm_info->suid = sem_arg->suid;
-    shm_info->ssm_sid = ssm_sid;
 
     char zenoh_key[5 + SSM_SNAME_MAX + sizeof(int)];
     if (snprintf(zenoh_key, sizeof(zenoh_key), "data/%s/%d", sem_arg->name, sem_arg->suid) < 0) {
@@ -291,8 +288,9 @@ void* semaphore_monitor(void* arg) {
     }
 
     z_context->pub = pub;
-    shm_info->tid = getTID_top(ssm_sid);
-    if (getSSM_info(sem_arg->name, sem_arg->suid, &shm_info->ssize, &shm_info->hsize, &shm_info->cycle, &shm_info->property_size) < 0) {
+    slist->ssmId = ssm_sid;
+    slist->tid = getTID_top(ssm_sid);
+    if (getSSM_info(sem_arg->name, sem_arg->suid, &slist->ssize, &slist->hsize, &slist->cycle, &slist->property_size) < 0) {
         printf("ERROR: SSM read error.\n");
         return NULL;
     }
@@ -302,20 +300,20 @@ void* semaphore_monitor(void* arg) {
             printf("test\n");
             break;
         }
-        shm_info->tid++;
-        printf("Waiting TID_TOP: %d\n", shm_info->tid);
-        waitTID( ssm_sid, shm_info->tid );
-        sem_arg->callback(z_context, shm_info);
+        slist->tid++;
+        printf("Waiting TID_TOP: %d\n", slist->tid);
+        waitTID( ssm_sid, slist->tid );
+        sem_arg->callback(z_context, slist);
     }
 
     z_drop(z_move(pub));
     free(sem_arg); // Free allocated memory
-    free(shm_info); // Free allocated memory
     return NULL;
 }
 
 // Function to monitor the message queue
 void* message_queue_monitor(void* arg) {
+    SSM_Zenoh_List *slist;
     zc_init_log_from_env_or("error");
     zenoh_context* z_context = (zenoh_context*)arg;
     ssm_msg msg;
@@ -345,6 +343,10 @@ void* message_queue_monitor(void* arg) {
                 sem_arg->active = (volatile int*)malloc(sizeof(int));
                 *(sem_arg->active) = 1;
                 sem_arg->z_context = z_context;
+                slist = search_ssm_zenoh_list( sem_arg->name, sem_arg->suid );
+                if( !slist ) {
+                    sem_arg->slist = add_ssm_zenoh_list( NULL, sem_arg->name, sem_arg->suid, 0, 0, 0, 0 );
+                }
 
                 if (pthread_create(&thread, NULL, semaphore_monitor, sem_arg) != 0) {
                     perror("Error creating thread");
@@ -356,6 +358,14 @@ void* message_queue_monitor(void* arg) {
                     active_flags[msg.suid] = *(sem_arg->active);
                 }
             } else if (msg.cmd_type == MC_STREAM_PROPERTY_SET) {
+                slist = search_ssm_zenoh_list( msg.name, msg.suid );
+
+                if (!slist) {
+                    printf("shm not created yet");
+                } else if (slist->extern_node == 1) {
+                    continue;
+                }
+
                 void *property = malloc(msg.ssize);
                 if (get_propertySSM(msg.name, msg.suid, property) == 0) {
                     printf("Failed to get property from shared memory\n");
@@ -500,7 +510,7 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
             printf("Topic name: %s\n", ssm_zenoh_name);
             printf("suid = %d\n", ssm_zenoh_suid);
         }
-        slist = add_ssm_zenoh_list( ssm_zenoh_ssm_sid, ssm_zenoh_name, ssm_zenoh_suid, ssm_zenoh_size, ssm_zenoh_num, ssm_zenoh_cycle );
+        slist = add_ssm_zenoh_list( ssm_zenoh_ssm_sid, ssm_zenoh_name, ssm_zenoh_suid, ssm_zenoh_size, ssm_zenoh_num, ssm_zenoh_cycle, 1 );
     }
 
     uint8_t time[sizeof(ssmTimeT)];
