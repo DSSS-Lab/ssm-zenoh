@@ -8,4 +8,9 @@ typedef struct
 	int num;
 } intSsm_k;
 
+typedef struct
+{
+	int num;
+} intSsm_p;
+
 #endif

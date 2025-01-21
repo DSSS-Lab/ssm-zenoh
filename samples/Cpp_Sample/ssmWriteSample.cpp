@@ -39,7 +39,8 @@ int main(int aArgc, char **aArgv)
 	// ssm登録名は./intSsm.hに#define SNAME_INT "intSsm"と定義
 	// ここでは同じディレクトリに入れてあるが、オドメトリなど標準的な変数は/usr/local/include/ssmtype/内で定義されている
 	// c++に慣れていないと馴染みがない書き方だけれど，ここはパターンで使えれば充分
-	SSMApi<intSsm_k> intSsm(SNAME_INT, 1);
+	SSMApi<intSsm_k, intSsm_p> intSsm(SNAME_INT, 1);
+    intSsm.property.num = 10;
 
 	// ssm関連の初期化
 	if(!initSSM())return 0;
@@ -48,6 +49,8 @@ int main(int aArgc, char **aArgv)
 	// create 失敗するとfalseを返す
 	//intSsm.create( センサデータ保持時間(sec), おおよそのデータ更新周期(sec) )
 	if( !intSsm.create( 5.0, 1.0 ) ){return 1;}
+
+	intSsm.setProperty();
 
 	// 安全に終了できるように設定
 	setSigInt();

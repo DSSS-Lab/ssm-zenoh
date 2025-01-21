@@ -39,7 +39,7 @@ int main(int aArgc, char **aArgv)
 	// ここでは同じディレクトリに入れてあるが、オドメトリなど標準的な変数は/user/local/include/ssmtype/内で定義されている
 	// c++に慣れていないと馴染みがない書き方だけれど，ここはパターンで使えれば充分
 	// readとwriteで同じ宣言ができていればOK
-	SSMApi<intSsm_k> intSsm(SNAME_INT, 1);
+	SSMApi<intSsm_k, intSsm_p> intSsm(SNAME_INT, 1);
 
 	// ssm関連の初期化
 	if(!initSSM())return 0;
@@ -48,6 +48,8 @@ int main(int aArgc, char **aArgv)
 	// open 失敗するとfalseを返す
 	if(!(intSsm.open( SSM_READ ))){ endSSM(); return 1; }
 
+	intSsm.getProperty();
+	printf("Prop = %d\n", intSsm.property.num);
 	// 安全に終了できるように設定
 	setSigInt();
 
