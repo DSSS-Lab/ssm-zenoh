@@ -397,8 +397,9 @@ void* message_queue_monitor(void* arg) {
                 property_options.attachment = z_move(attachment);
 
                 // Create a Zenoh payload from the current shared memory content
+                size_t property_size = sizeof(property);
                 z_owned_bytes_t b_property_size, b_property;
-                z_bytes_copy_from_buf(&b_property_size, (uint8_t*) &msg.ssize, sizeof(size_t));
+                z_bytes_copy_from_buf(&b_property_size, (uint8_t*) &property_size, sizeof(size_t));
                 z_bytes_copy_from_buf(&b_property, (uint8_t*) property, sizeof(property));
 
                 z_owned_bytes_writer_t property_writer;
@@ -514,7 +515,7 @@ void data_handler(z_loaned_sample_t* sample, void* arg) {
     }
 
     uint8_t time[sizeof(ssmTimeT)];
-    uint8_t data[ssm_zenoh_size];
+    uint8_t data[slist->ssize];
 
     z_bytes_reader_t reader = z_bytes_get_reader(z_sample_payload(sample));
     z_bytes_reader_read(&reader, time, sizeof(ssmTimeT));
@@ -543,9 +544,9 @@ void property_handler(z_loaned_sample_t* sample, void* arg) {
         return;
     }
 
-    z_owned_string_t attachment_string;
-    z_bytes_to_string(property_attachment, &attachment_string);
-    const char* ipv4_zenoh_address = z_string_data(z_loan(attachment_string));
+    z_owned_string_t attachment_property_string;
+    z_bytes_to_string(property_attachment, &attachment_property_string);
+    const char* ipv4_zenoh_address = z_string_data(z_loan(attachment_property_string));
 
     if (strcmp(ipv4_zenoh_address, ipv4_address) == 0) {
         printf("Own Property\n");
@@ -584,8 +585,8 @@ void property_handler(z_loaned_sample_t* sample, void* arg) {
         return;
     }
 
-    printf("\n");
-    z_drop(z_move(attachment_string));
+    printf("Successfully write property\n");
+    z_drop(z_move(attachment_property_string));
 }
 
 
