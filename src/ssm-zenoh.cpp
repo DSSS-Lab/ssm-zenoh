@@ -232,25 +232,30 @@ void semaphore_callback(zenoh_context* z_context, SSM_Zenoh_List* shm_info) {
     z_bytes_copy_from_buf(&b_time, (uint8_t*) &ytime, sizeof(ssmTimeT));
     z_bytes_copy_from_buf(&b_data, (uint8_t*) data, sizeof(data));
 
-    z_owned_bytes_writer_t writer;
-    z_bytes_writer_empty(&writer);
-    if (z_bytes_writer_append(z_loan_mut(writer), z_move(b_time)) < 0) {
+    z_owned_bytes_writer_t pub_writer;
+    z_bytes_writer_empty(&pub_writer);
+    if (z_bytes_writer_append(z_loan_mut(pub_writer), z_move(b_time)) < 0) {
         printf("Failed z_bytes_writer_append\n");
         return;
     }
-    if (z_bytes_writer_append(z_loan_mut(writer), z_move(b_data)) < 0) {
+    if (z_bytes_writer_append(z_loan_mut(pub_writer), z_move(b_data)) < 0) {
         printf("Failed z_bytes_writer_append\n");
         return;
     }
 
-    z_owned_bytes_t payload;
-    z_bytes_writer_finish(z_move(writer), &payload);
+    z_owned_bytes_t pub_payload;
+    z_bytes_writer_finish(z_move(pub_writer), &pub_payload);
 
-    if (z_publisher_put(z_loan(z_context->pub), z_move(payload), &options) < 0) {
+    if (z_publisher_put(z_loan(z_context->pub), z_move(pub_payload), &options) < 0) {
         printf("Failed to publish data for key\n");
     } else {
         printf("Data published successfully\n");
     }
+    z_drop(z_move(pub_payload));
+    z_drop(z_move(pub_writer));
+    z_drop(z_move(b_time));
+    z_drop(z_move(b_data));
+    z_drop(z_move(pub_attachment));
 }
 
 // Function for semaphore monitoring thread
@@ -265,7 +270,7 @@ void* semaphore_monitor(void* arg) {
         return NULL;
     }
 
-    char zenoh_key[5 + SSM_SNAME_MAX + sizeof(int)];
+    char zenoh_key[5 + sizeof(sem_arg->name) + sizeof(sem_arg->suid)];
     if (snprintf(zenoh_key, sizeof(zenoh_key), "data/%s/%d", sem_arg->name, sem_arg->suid) < 0) {
         printf("Failed to format Zenoh key for Shared Memory ID: %d\n", sem_arg->suid);
         return NULL;
@@ -368,8 +373,8 @@ void* message_queue_monitor(void* arg) {
                     continue;
                 }
 
-                char zenoh_property_key[9 + SSM_SNAME_MAX + sizeof(int)];
-                if (snprintf(zenoh_property_key, sizeof(zenoh_property_key), "property/%s/%d", msg.name, msg.suid) < 0) {
+                char zenoh_property_key[5 + sizeof(msg.name) + sizeof(msg.suid)];
+                if (snprintf(zenoh_property_key, sizeof(zenoh_property_key), "prop/%s/%d", msg.name, msg.suid) < 0) {
                     printf("Failed to format Zenoh key for Property: %d\n", msg.suid);
                     continue;
                 }
@@ -405,14 +410,19 @@ void* message_queue_monitor(void* arg) {
                     continue;
                 }
 
-                z_owned_bytes_t payload;
-                z_bytes_writer_finish(z_move(property_writer), &payload);
+                z_owned_bytes_t pub_property_payload;
+                z_bytes_writer_finish(z_move(property_writer), &pub_property_payload);
 
-                if (z_put(z_loan(z_context->session), z_loan(property_pub_key), z_move(payload), &property_options) < 0) {
+                if (z_put(z_loan(z_context->session), z_loan(property_pub_key), z_move(pub_property_payload), &property_options) < 0) {
                     printf("Failed put property\n");
-                    continue;
+                } else {
+                    printf("Stream property set successfully.\n");
                 }
-                printf("Stream property set successfully.\n");
+                z_drop(z_move(pub_property_payload));
+                z_drop(z_move(b_property_size));
+                z_drop(z_move(b_property));
+                z_drop(z_move(property_writer));
+                z_drop(z_move(pub_property_attachment));
             } else if (msg.cmd_type == MC_DESTROY) {
                 // Stop the corresponding thread
                 if (thread_map[msg.suid] != 0) {
@@ -445,12 +455,6 @@ const char* kind_to_str(z_sample_kind_t kind) {
     }
 }
 
-void print_slice_data(z_view_slice_t *slice) {
-    for (size_t i = 0; i < z_slice_len(z_view_slice_loan(slice)); i++) {
-        printf("0x%02x ", z_slice_data(z_view_slice_loan(slice))[i]);
-    }
-}
-
 void data_handler(z_loaned_sample_t* data_sample, void* arg) {
     SSM_Zenoh_List *slist;
     const z_loaned_bytes_t* sub_attachment = z_sample_attachment(data_sample);
@@ -461,10 +465,11 @@ void data_handler(z_loaned_sample_t* data_sample, void* arg) {
         return;
     }
 
-    int ssm_zenoh_tid_top, ssm_zenoh_num;
-    char ipv4_zenoh_address[NI_MAXHOST];
-    size_t ssm_zenoh_size;
-    double ssm_zenoh_cycle;
+    int ssm_zenoh_tid_top = 0;
+    int ssm_zenoh_num = 0;
+    char ipv4_zenoh_address[NI_MAXHOST] = "";
+    size_t ssm_zenoh_size = 0;
+    double ssm_zenoh_cycle = 0;
 
     z_owned_string_t sub_attachment_string;
     z_bytes_to_string(sub_attachment, &sub_attachment_string);
@@ -481,6 +486,7 @@ void data_handler(z_loaned_sample_t* data_sample, void* arg) {
     }
 
     z_view_string_t sub_key_string;
+    z_view_string_empty(&sub_key_string);
     z_keyexpr_as_view_string(z_sample_keyexpr(data_sample), &sub_key_string);
     printf("Topic: %s\n", z_string_data(z_loan(sub_key_string)));
 
@@ -539,24 +545,29 @@ void property_handler(z_loaned_sample_t* property_sample, void* arg) {
 
     if (strcmp(ipv4_zenoh_address, ipv4_address) == 0) {
         printf("Own Property\n");
+        z_drop(z_move(attachment_property_string));
         return;
     }
 
     z_view_string_t sub_property_key_string;
+    z_view_string_empty(&sub_property_key_string);
     z_keyexpr_as_view_string(z_sample_keyexpr(property_sample), &sub_property_key_string);
+
     printf("Topic: %s\n", z_string_data(z_loan(sub_property_key_string)));
 
     char ssm_zenoh_property_name[SSM_SNAME_MAX];
     int ssm_zenoh_property_suid = 0;
-    if (sscanf(z_string_data(z_loan(sub_property_key_string)), "property/%[^/]/%d", ssm_zenoh_property_name, &ssm_zenoh_property_suid) != 2) {
+    if (sscanf(z_string_data(z_loan(sub_property_key_string)), "prop/%[^/]/%d", ssm_zenoh_property_name, &ssm_zenoh_property_suid) != 2) {
         printf("Failed to get topic for shared memory\n");
+        z_drop(z_move(attachment_property_string));
         return;
     }
 
     slist = search_ssm_zenoh_list( ssm_zenoh_property_name, ssm_zenoh_property_suid );
 
     if( !slist ) {
-        printf("There is no shared memory for the property");
+        printf("There is no shared memory for the property\n");
+        z_drop(z_move(attachment_property_string));
         return;
     }
 
@@ -587,7 +598,7 @@ void* zenoh_message_monitor(void* arg) {
 
     char sub_data_keyexpr[] = "data/**";
     z_view_keyexpr_t sub_key;
-    z_view_keyexpr_from_str(&sub_key, sub_data_keyexpr);
+    z_view_keyexpr_from_str_unchecked(&sub_key, sub_data_keyexpr);
 
     z_owned_closure_sample_t data_callback;
     z_closure(&data_callback, data_handler, NULL, NULL);
@@ -598,9 +609,9 @@ void* zenoh_message_monitor(void* arg) {
         exit(-1);
     }
 
-    char sub_property_keyexpr[] = "property/**";
+    char sub_property_keyexpr[] = "prop/**";
     z_view_keyexpr_t property_sub_key;
-    z_view_keyexpr_from_str(&property_sub_key, sub_property_keyexpr);
+    z_view_keyexpr_from_str_unchecked(&property_sub_key, sub_property_keyexpr);
 
     z_owned_closure_sample_t property_callback;
     z_closure(&property_callback, property_handler, NULL, NULL);
@@ -612,12 +623,13 @@ void* zenoh_message_monitor(void* arg) {
     }
 
     while (keep_running) {
-        printf("Monitoring Zenoh messages...\n");
         z_sleep_s(1);
     }
 
     z_drop(z_move(data_sub));
+    z_drop(z_move(data_callback));
     z_drop(z_move(property_sub));
+    z_drop(z_move(property_callback));
     return NULL;
 }
 
@@ -661,6 +673,7 @@ int main(int argc, char **argv) {
     pthread_join(zenoh_thread, NULL);
 
     z_drop(z_move(session));
+    z_drop(z_move(config));
     endSSM();
 
     return 1;
