@@ -366,24 +366,21 @@ void* message_queue_monitor(void* arg) {
                     continue;
                 }
 
-                void *property = malloc(msg.ssize);
+                char property[msg.ssize];
                 if (get_propertySSM(msg.name, msg.suid, property) == 0) {
                     printf("Failed to get property from shared memory\n");
-                    free(property);
                     continue;
                 }
 
                 char zenoh_property_key[9 + SSM_SNAME_MAX + sizeof(int)];
                 if (snprintf(zenoh_property_key, sizeof(zenoh_property_key), "property/%s/%d", msg.name, msg.suid) < 0) {
                     printf("Failed to format Zenoh key for Property: %d\n", msg.suid);
-                    free(property);
                     continue;
                 }
 
                 z_view_keyexpr_t property_ke;
                 if (z_view_keyexpr_from_str(&property_ke, zenoh_property_key) < 0) {
                     printf("Failed to create Zenoh key expression from key: %s\n", zenoh_property_key);
-                    free(property);
                     continue;
                 }
 
@@ -397,21 +394,18 @@ void* message_queue_monitor(void* arg) {
                 property_options.attachment = z_move(attachment);
 
                 // Create a Zenoh payload from the current shared memory content
-                size_t property_size = sizeof(property);
                 z_owned_bytes_t b_property_size, b_property;
-                z_bytes_copy_from_buf(&b_property_size, (uint8_t*) &property_size, sizeof(size_t));
+                z_bytes_copy_from_buf(&b_property_size, (uint8_t*) &msg.ssize, sizeof(size_t));
                 z_bytes_copy_from_buf(&b_property, (uint8_t*) property, sizeof(property));
 
                 z_owned_bytes_writer_t property_writer;
                 z_bytes_writer_empty(&property_writer);
                 if (z_bytes_writer_append(z_loan_mut(property_writer), z_move(b_property_size)) < 0) {
                     printf("Failed z_bytes_writer_append\n");
-                    free(property);
                     continue;
                 }
                 if (z_bytes_writer_append(z_loan_mut(property_writer), z_move(b_property)) < 0) {
                     printf("Failed z_bytes_writer_append\n");
-                    free(property);
                     continue;
                 }
 
@@ -420,11 +414,9 @@ void* message_queue_monitor(void* arg) {
 
                 if (z_put(z_loan(z_context->session), z_loan(property_ke), z_move(payload), &property_options) < 0) {
                     printf("Failed put property\n");
-                    free(property);
                     continue;
                 }
                 printf("Stream property set successfully.\n");
-                free(property);
             } else if (msg.cmd_type == MC_DESTROY) {
                 // Stop the corresponding thread
                 if (thread_map[msg.suid] != 0) {
