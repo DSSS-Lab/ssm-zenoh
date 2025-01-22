@@ -30,7 +30,7 @@ typedef struct ssm_zenoh_list
     int extern_node;
 } SSM_Zenoh_List;
 
-// Structure for semaphore monitoring
+// Structure for shared memory monitoring
 typedef struct {
     int suid;                       // shm id
     char name[SSM_SNAME_MAX];       // shm name
@@ -38,7 +38,7 @@ typedef struct {
     volatile int* active;           // Flag to indicate if the thread is active
     zenoh_context* z_context;       // Pointer to the Zenoh context
     SSM_Zenoh_List* slist;
-} semaphore_arg;
+} shared_memory_arg;
 
 /* ---- function prototypes ---- */
 void handle_sigint(int sig);
@@ -48,8 +48,8 @@ SSM_Zenoh_List *add_ssm_zenoh_list( SSM_sid ssmId, char *name, int suid, size_t 
 SSM_Zenoh_List *search_ssm_zenoh_list( char *name, int suid );
 SSM_Zenoh_List *get_nth_ssm_zenoh_list( int n );
 void free_ssm_zenoh_list( SSM_Zenoh_List * ssmp );
-void semaphore_callback(int shm_id);
-void* semaphore_monitor(void* arg);
+void shared_memory_callback(int shm_id);
+void* shared_memory_monitor(void* arg);
 void* message_queue_monitor(void* arg);
 
 

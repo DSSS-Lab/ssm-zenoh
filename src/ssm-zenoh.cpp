@@ -223,8 +223,8 @@ void print_char_bits(const char* str) {
     printf("\n");
 }
 
-// Callback function called when a semaphore is signaled
-void semaphore_callback(zenoh_context* z_context, SSM_Zenoh_List* shm_info) {
+// Callback function called when a shared memory is signaled
+void shared_memory_callback(zenoh_context* z_context, SSM_Zenoh_List* shm_info) {
     z_publisher_put_options_t options;
     z_publisher_put_options_default(&options);
 
@@ -286,10 +286,10 @@ void semaphore_callback(zenoh_context* z_context, SSM_Zenoh_List* shm_info) {
     z_drop(z_move(pub_attachment));
 }
 
-// Function for semaphore monitoring thread
-void* semaphore_monitor(void* arg) {
+// Function for shared memory monitoring thread
+void* shared_memory_monitor(void* arg) {
     SSM_Zenoh_List *slist = (SSM_Zenoh_List*) arg;
-    semaphore_arg* sem_arg = (semaphore_arg*)arg;
+    shared_memory_arg* sem_arg = (shared_memory_arg*)arg;
     zenoh_context* z_context = sem_arg->z_context;
 
     SSM_sid ssm_sid = openSSM(sem_arg->name, sem_arg->suid, SSM_READ);
@@ -375,15 +375,15 @@ void* message_queue_monitor(void* arg) {
             if (msg.cmd_type == MC_CREATE) {
                 if (thread_map[msg.suid] != 0) {
                     if( verbosity_mode >= 2 ) {
-                        printf("Semaphore ID %d is already being monitored.\n", msg.suid);
+                        printf("Shared Memory ID %d is already being monitored.\n", msg.suid);
                     }
                     continue;
                 }
-                // Create a thread to monitor the semaphore
-                semaphore_arg* sem_arg = (semaphore_arg *)(malloc(sizeof(semaphore_arg)));
+                // Create a thread to monitor the shared_memory
+                shared_memory_arg* sem_arg = (shared_memory_arg *)(malloc(sizeof(shared_memory_arg)));
                 sem_arg->suid = msg.suid;
                 strncpy( sem_arg->name, msg.name, SSM_SNAME_MAX );
-                sem_arg->callback = semaphore_callback;
+                sem_arg->callback = shared_memory_callback;
                 sem_arg->active = (volatile int*)malloc(sizeof(int));
                 *(sem_arg->active) = 1;
                 sem_arg->z_context = z_context;
@@ -392,7 +392,7 @@ void* message_queue_monitor(void* arg) {
                     sem_arg->slist = add_ssm_zenoh_list( NULL, sem_arg->name, sem_arg->suid, 0, 0, 0, 0 );
                 }
 
-                if (pthread_create(&thread, NULL, semaphore_monitor, sem_arg) != 0) {
+                if (pthread_create(&thread, NULL, shared_memory_monitor, sem_arg) != 0) {
                     if( verbosity_mode >= 1 ) {
                         printf("Error: Could not create thread");
                     }
@@ -492,11 +492,11 @@ void* message_queue_monitor(void* arg) {
                     active_flags[msg.suid] = 0; // Signal the thread to stop
                     thread_map[msg.suid] = 0;
                     if( verbosity_mode >= 2 ) {
-                        printf("Thread monitoring semaphore %d stopped.\n", msg.suid);
+                        printf("Thread monitoring shared memory %d stopped.\n", msg.suid);
                     }
                 } else {
                     if( verbosity_mode >= 2 ) {
-                        printf("No active thread for semaphore %d to stop.\n", msg.suid);
+                        printf("No active thread for shared memory %d to stop.\n", msg.suid);
                     }
                 }
             }
@@ -512,6 +512,7 @@ void* message_queue_monitor(void* arg) {
     return NULL;
 }
 
+// Callback to handle data
 void data_handler(z_loaned_sample_t* data_sample, void* arg) {
     SSM_Zenoh_List *slist;
     const z_loaned_bytes_t* sub_attachment = z_sample_attachment(data_sample);
@@ -598,6 +599,7 @@ void data_handler(z_loaned_sample_t* data_sample, void* arg) {
     z_drop(z_move(sub_attachment_string));
 }
 
+// Callback to handel property
 void property_handler(z_loaned_sample_t* property_sample, void* arg) {
     SSM_Zenoh_List *slist;
     const z_loaned_bytes_t* sub_property_attachment = z_sample_attachment(property_sample);
