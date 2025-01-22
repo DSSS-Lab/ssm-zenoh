@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <getopt.h>
+#include <limits.h>
 #include <sys/types.h>
 #include <ifaddrs.h>
 #include <sys/socket.h>
@@ -25,6 +26,7 @@
 using namespace std;
 
 int verbosity_mode = 1;
+const char* zenoh_config_path = NULL;
 int msq_id = -1;				                /**< Message queue ID */
 char ipv4_address[NI_MAXHOST] = "";
 pid_t my_pid;
@@ -725,6 +727,7 @@ int print_help( char *name )
     fprintf( stderr, "\t-q | --quiet                : print quiet.\n" );
     fprintf( stderr, "\t   | --version              : print version.\n" );
     fprintf( stderr, "\t-h | --help                 : print this help.\n" );
+    fprintf( stderr, "\t-c | --config <file>        : specify config file.\n" );
 
     fprintf( stderr, "ex)\n\t%s\n", name );
     return 0;
@@ -733,15 +736,17 @@ int print_help( char *name )
 int arg_analyze( int argc, char **argv )
 {
     int opt, optIndex = 0, optFlag = 0;
+    static char abs_path[PATH_MAX];
     struct option longOpt[] = {
-        {"version", 0, &optFlag, 'V'},
-        {"quiet", 0, 0, 'q'},
-        {"verbose", 0, 0, 'v'},
-        {"help", 0, 0, 'h'},
+        {"version", no_argument, &optFlag, 'V'},
+        {"quiet", no_argument, 0, 'q'},
+        {"verbose", no_argument, 0, 'v'},
+        {"help", no_argument, 0, 'h'},
+        {"config", required_argument, 0, 'c'},
         {0, 0, 0, 0}
     };
 
-    while( ( opt = getopt_long( argc, argv, "vqh", longOpt, &optIndex ) ) != -1 )
+    while( ( opt = getopt_long( argc, argv, "vqhc:", longOpt, &optIndex ) ) != -1 )
     {
         switch ( opt )
         {
@@ -750,6 +755,16 @@ int arg_analyze( int argc, char **argv )
             break;
             case 'q':
                 verbosity_mode = 0;
+            break;
+            case 'c':
+                if (optarg) {
+                    if (realpath(optarg, abs_path) != NULL) {
+                        zenoh_config_path = abs_path;
+                    } else {
+                        fprintf(stderr, "Error: Unable to resolve absolute path for %s\n", optarg);
+                        return 0;
+                    }
+                }
             break;
             case 'h':
                 print_help( argv[0] );
@@ -798,7 +813,14 @@ int main(int argc, char **argv) {
 
     // Configure Zenoh session
     z_owned_config_t config;
-    z_config_default(&config);
+    if (zenoh_config_path != NULL) {
+        if (zc_config_from_file(&config, zenoh_config_path) < 0) {
+            printf( "Error: Unable to load config file %s\n", zenoh_config_path );
+            exit(1);
+        }
+    } else {
+        z_config_default(&config);
+    }
     z_owned_session_t session;
     if (z_open(&session, z_move(config), NULL) < 0) {
         if( verbosity_mode >= 1 ) {
