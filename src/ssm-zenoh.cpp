@@ -57,8 +57,8 @@ void list_ip_addresses() {
         if (ifa->ifa_addr == NULL)
             continue;
 
-        // Ignore loopback interface "lo"
-        if (strcmp(ifa->ifa_name, "lo") == 0)
+        // Ignore loopback interface "lo", "lo0"
+        if (strcmp(ifa->ifa_name, "lo") == 0 || strcmp(ifa->ifa_name, "lo0") == 0)
             continue;
 
         // Process only AF_INET (IPv4) addresses
