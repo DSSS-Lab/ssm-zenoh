@@ -34,8 +34,8 @@ int main( int argc, char *argv[] )
 	// scanf("%d",&i);
 	sid_search = 0;
 
-	printf( "No. |  sensor name   | suid | size[B] |  num  | cycle[s] | property[B] |\n" );
-	printf( "----+----------------+------+---------+-------+----------+-------------|\n" );
+	printf( "No. |         sensor name          | suid | size[B] |  num  | cycle[s] | property[B] |\n" );
+	printf( "----+------------------------------+------+---------+-------+----------+-------------|\n" );
 	while( getSSM_name( sid_search, name, &suid, &size ) >= 0 )
 	{
 		if( getSSM_info( name, suid, &size, &num, &cycle, &property_size ) < 0 )
@@ -48,10 +48,10 @@ int main( int argc, char *argv[] )
 		get_unit( &size_human, &size_unit, 1024 );
 		get_unit( &property_size_human, &property_unit, 1024 );
 
-		printf( "%03d | %14.14s | %4d | %6.2f%c | %5d | %8.3f | %10.2f%c\n", sid_search, name, suid, size_human, size_unit, num, cycle, property_size_human, property_unit );
+		printf( "%03d | %28.28s | %4d | %6.2f%c | %5d | %8.3f | %10.2f%c\n", sid_search, name, suid, size_human, size_unit, num, cycle, property_size_human, property_unit );
 		sid_search++;
 	}
-	printf( "----+----------------+------+---------+-------+----------+-------------|\n" );
+	printf( "----+------------------------------+------+---------+-------+----------+-------------|\n" );
 
 	printf( "Total %d sensors.\n", sid_search );
 

@@ -301,7 +301,7 @@ void* shared_memory_monitor(void* arg) {
     }
 
     char zenoh_key[5 + sizeof(sem_arg->name) + sizeof(sem_arg->suid)];
-    if (snprintf(zenoh_key, sizeof(zenoh_key), "data/%s/%d", sem_arg->name, sem_arg->suid) < 0) {
+    if (snprintf(zenoh_key, sizeof(zenoh_key), "data/%s/%d;", sem_arg->name, sem_arg->suid) < 0) {
         if( verbosity_mode >= 1 ) {
             printf("Error: Failed to format Zenoh key for Shared Memory ID: %d\n", sem_arg->suid);
         }
@@ -423,7 +423,7 @@ void* message_queue_monitor(void* arg) {
                 }
 
                 char zenoh_property_key[5 + sizeof(msg.name) + sizeof(msg.suid)];
-                if (snprintf(zenoh_property_key, sizeof(zenoh_property_key), "prop/%s/%d", msg.name, msg.suid) < 0) {
+                if (snprintf(zenoh_property_key, sizeof(zenoh_property_key), "prop/%s/%d;", msg.name, msg.suid) < 0) {
                     if( verbosity_mode >= 1 ) {
                         printf("Error: Failed to format Zenoh key for property: %s, %d\n", msg.name, msg.suid);
                     }
@@ -553,14 +553,17 @@ void data_handler(z_loaned_sample_t* data_sample, void* arg) {
     z_view_string_empty(&sub_key_string);
     z_keyexpr_as_view_string(z_sample_keyexpr(data_sample), &sub_key_string);
 
-    char ssm_zenoh_name[SSM_SNAME_MAX];
+    char zenoh_name[SSM_SNAME_MAX];
     int ssm_zenoh_suid = 0;
-    if (sscanf(z_string_data(z_loan(sub_key_string)), "data/%[^/]/%d", ssm_zenoh_name, &ssm_zenoh_suid) != 2) {
+    if (sscanf(z_string_data(z_loan(sub_key_string)), "data/%[^/]/%d;", zenoh_name, &ssm_zenoh_suid) != 2) {
         if( verbosity_mode >= 1 ) {
             printf("Error: Failed to get topic for shared memory\n");
         }
         return;
     }
+
+    char ssm_zenoh_name[NI_MAXHOST + SSM_SNAME_MAX + 2];
+    snprintf(ssm_zenoh_name, sizeof(ssm_zenoh_name), "%s;%s", ipv4_zenoh_address, zenoh_name);
 
     slist = search_ssm_zenoh_list( ssm_zenoh_name, ssm_zenoh_suid );
 
@@ -630,7 +633,7 @@ void property_handler(z_loaned_sample_t* property_sample, void* arg) {
 
     char ssm_zenoh_property_name[SSM_SNAME_MAX];
     int ssm_zenoh_property_suid = 0;
-    if (sscanf(z_string_data(z_loan(sub_property_key_string)), "prop/%[^/]/%d", ssm_zenoh_property_name, &ssm_zenoh_property_suid) != 2) {
+    if (sscanf(z_string_data(z_loan(sub_property_key_string)), "prop/%[^/]/%d;", ssm_zenoh_property_name, &ssm_zenoh_property_suid) != 2) {
         if( verbosity_mode >= 1 ) {
             printf("Error: Failed to get topic for shared memory\n");
         }
@@ -804,10 +807,10 @@ int main(int argc, char **argv) {
         return 1;
     if( verbosity_mode >= 1 ) {
         printf( "\n" );
-        printf( " --------------------------------------------------\n" );
+        printf( " -----------------------------------------------------\n" );
         printf( " SSM-Zenoh ( Streaming data Sharing Manager - Zenoh )\n" );
         printf( " Ver. %s\n", PACKAGE_VERSION );
-        printf( " --------------------------------------------------\n\n" );
+        printf( " -----------------------------------------------------\n\n" );
     }
 
     if( !ssm_zenoh_ini(  ) || !initSSM() )
