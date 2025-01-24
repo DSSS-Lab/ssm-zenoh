@@ -106,7 +106,7 @@ int ssm_zenoh_ini( void )
 	return 1;
 }
 
-SSM_Zenoh_List *add_ssm_zenoh_list( SSM_sid ssmId, char *name, int suid, size_t ssize, int hsize, ssmTimeT cycle, int extern_node )
+SSM_Zenoh_List *add_ssm_zenoh_list( char *ipv4_address, char *name, int suid, size_t ssize, int hsize, ssmTimeT cycle, int extern_node, int active )
 {
     SSM_Zenoh_List *p, *q;
 
@@ -117,16 +117,19 @@ SSM_Zenoh_List *add_ssm_zenoh_list( SSM_sid ssmId, char *name, int suid, size_t 
         }
     }
 
-    p->ssmId = ssmId;
     strcpy( p->name, name );
+    strcpy( p->ipv4_zenoh_address, ipv4_address );
+    p->ssmId = 0;
     p->suid = suid;
     p->ssize = ssize;
     p->hsize = hsize;
     p->next = 0;
-    p->property = 0;
     p->property_size = 0;
     p->cycle = cycle;
     p->extern_node = extern_node;
+    p->active = active;
+    p->thread = 0;
+    p->tid = 0;
     /* リストの最後にpを追加 */
     if( !ssm_zenoh_top )
     {
@@ -230,7 +233,7 @@ void shared_memory_callback(zenoh_context* z_context, SSM_Zenoh_List* shm_info) 
 
     z_owned_bytes_t pub_attachment;
     char pub_attachment_str[sizeof(ipv4_address) + sizeof(shm_info->tid) + sizeof(shm_info->ssize) + sizeof(shm_info->hsize) + sizeof(shm_info->cycle)];
-    snprintf(pub_attachment_str, sizeof(pub_attachment_str), "%s;%d;%lu;%d;%f", ipv4_address, shm_info->tid, shm_info->ssize, shm_info->hsize, shm_info->cycle);
+    snprintf(pub_attachment_str, sizeof(pub_attachment_str), "%s;%d;%lu;%d;%f;", ipv4_address, shm_info->tid, shm_info->ssize, shm_info->hsize, shm_info->cycle);
     if (z_bytes_copy_from_str(&pub_attachment, pub_attachment_str) < 0) {
         if( verbosity_mode >= 1 ) {
             printf("Error: Failed to create Zenoh options from attachment: %s\n", pub_attachment_str);
@@ -288,22 +291,22 @@ void shared_memory_callback(zenoh_context* z_context, SSM_Zenoh_List* shm_info) 
 
 // Function for shared memory monitoring thread
 void* shared_memory_monitor(void* arg) {
-    SSM_Zenoh_List *slist = (SSM_Zenoh_List*) arg;
-    shared_memory_arg* sem_arg = (shared_memory_arg*)arg;
-    zenoh_context* z_context = sem_arg->z_context;
+    shared_memory_arg* shm_arg = (shared_memory_arg*)arg;
+    zenoh_context* z_context = shm_arg->z_context;
+    SSM_Zenoh_List *slist = shm_arg->slist;
 
-    SSM_sid ssm_sid = openSSM(sem_arg->name, sem_arg->suid, SSM_READ);
+    SSM_sid ssm_sid = openSSM(shm_arg->name, shm_arg->suid, SSM_READ);
     if (ssm_sid == 0) {
         if( verbosity_mode >= 1 ) {
-            printf("Error: Failed to open SSM: %s, %d\n", sem_arg->name, sem_arg->suid);
+            printf("Error: Failed to open SSM: %s, %d\n", shm_arg->name, shm_arg->suid);
         }
         return NULL;
     }
 
-    char zenoh_key[5 + sizeof(sem_arg->name) + sizeof(sem_arg->suid)];
-    if (snprintf(zenoh_key, sizeof(zenoh_key), "data/%s/%d;", sem_arg->name, sem_arg->suid) < 0) {
+    char zenoh_key[5 + sizeof(shm_arg->name) + sizeof(shm_arg->suid)];
+    if (snprintf(zenoh_key, sizeof(zenoh_key), "data/%s/%d;", shm_arg->name, shm_arg->suid) < 0) {
         if( verbosity_mode >= 1 ) {
-            printf("Error: Failed to format Zenoh key for Shared Memory ID: %d\n", sem_arg->suid);
+            printf("Error: Failed to format Zenoh key for Shared Memory ID: %d\n", shm_arg->suid);
         }
         return NULL;
     }
@@ -327,7 +330,7 @@ void* shared_memory_monitor(void* arg) {
     z_context->pub = pub;
     slist->ssmId = ssm_sid;
     slist->tid = getTID_top(ssm_sid);
-    if (getSSM_info(sem_arg->name, sem_arg->suid, &slist->ssize, &slist->hsize, &slist->cycle, &slist->property_size) < 0) {
+    if (getSSM_info(shm_arg->name, shm_arg->suid, &slist->ssize, &slist->hsize, &slist->cycle, &slist->property_size) < 0) {
         if( verbosity_mode >= 1 ) {
             printf("ERROR: Failed to read information for shared memory.\n");
         }
@@ -335,7 +338,7 @@ void* shared_memory_monitor(void* arg) {
     }
 
     while (keep_running) {
-        if (sem_arg->active == 0) {
+        if (slist->active == 0) {
             break;
         }
         slist->tid++;
@@ -343,12 +346,100 @@ void* shared_memory_monitor(void* arg) {
             printf("Waiting TID_TOP: %d\n", slist->tid);
         }
         waitTID( ssm_sid, slist->tid );
-        sem_arg->callback(z_context, slist);
+        shm_arg->callback(z_context, slist);
+    }
+
+    if( verbosity_mode >= 2 ) {
+        printf("stopping shm monitor of name: %s, suid, %d\n", shm_arg->name, shm_arg->suid);
     }
 
     z_drop(z_move(pub));
-    free(sem_arg); // Free allocated memory
+    free(shm_arg); // Free allocated memory
     return NULL;
+}
+
+void property_msg_handler(ssm_msg msg, zenoh_context* z_context, SSM_Zenoh_List *slist) {
+    if (!slist) {
+        if (verbosity_mode >= 2) {
+            printf("shm not created yet");
+        }
+    } else if (slist->extern_node == 1) {
+        return;
+    }
+
+    char property[msg.ssize];
+    if (get_propertySSM(msg.name, msg.suid, property) == 0) {
+        if (verbosity_mode >= 1) {
+            printf("Error: Failed to get property for shared memory\n");
+        }
+        return;
+    }
+
+    char zenoh_property_key[5 + sizeof(msg.name) + sizeof(msg.suid)];
+    if (snprintf(zenoh_property_key, sizeof(zenoh_property_key), "prop/%s/%d;", msg.name, msg.suid) < 0) {
+        if (verbosity_mode >= 1) {
+            printf("Error: Failed to format Zenoh key for property: %s, %d\n", msg.name, msg.suid);
+        }
+        return;
+    }
+
+    z_view_keyexpr_t property_pub_key;
+    if (z_view_keyexpr_from_str(&property_pub_key, zenoh_property_key) < 0) {
+        if (verbosity_mode >= 1) {
+            printf("Error: Failed to create Zenoh key expression from key: %s\n", zenoh_property_key);
+        }
+        return;
+    }
+
+    z_put_options_t property_options;
+    z_put_options_default(&property_options);
+    z_owned_bytes_t pub_property_attachment;
+    if (z_bytes_copy_from_str(&pub_property_attachment, ipv4_address) < 0) {
+        if (verbosity_mode >= 1) {
+            printf("Error: Failed to create Zenoh options from attachment: %s\n", ipv4_address);
+        }
+        return;
+    }
+    property_options.attachment = z_move(pub_property_attachment);
+
+    // Create a Zenoh payload from the current shared memory content
+    z_owned_bytes_t b_property_size, b_property;
+    z_bytes_copy_from_buf(&b_property_size, (uint8_t *) &msg.ssize, sizeof(size_t));
+    z_bytes_copy_from_buf(&b_property, (uint8_t *) property, sizeof(property));
+
+    z_owned_bytes_writer_t property_writer;
+    z_bytes_writer_empty(&property_writer);
+    if (z_bytes_writer_append(z_loan_mut(property_writer), z_move(b_property_size)) < 0) {
+        if (verbosity_mode >= 1) {
+            printf("Error: Failed z_bytes_writer_append\n");
+        }
+        return;
+    }
+    if (z_bytes_writer_append(z_loan_mut(property_writer), z_move(b_property)) < 0) {
+        if (verbosity_mode >= 1) {
+            printf("Error: Failed z_bytes_writer_append\n");
+        }
+        return;
+    }
+
+    z_owned_bytes_t pub_property_payload;
+    z_bytes_writer_finish(z_move(property_writer), &pub_property_payload);
+
+    if (z_put(z_loan(z_context->session), z_loan(property_pub_key), z_move(pub_property_payload),
+              &property_options) < 0) {
+        if (verbosity_mode >= 1) {
+            printf("Error: Failed put property\n");
+        }
+    } else {
+        if (verbosity_mode >= 2) {
+            printf("Stream property set successfully.\n");
+        }
+    }
+    z_drop(z_move(pub_property_payload));
+    z_drop(z_move(b_property_size));
+    z_drop(z_move(b_property));
+    z_drop(z_move(property_writer));
+    z_drop(z_move(pub_property_attachment));
 }
 
 // Function to monitor the message queue
@@ -358,8 +449,6 @@ void* message_queue_monitor(void* arg) {
     zenoh_context* z_context = (zenoh_context*)arg;
     ssm_msg msg;
     pthread_t thread;
-    static pthread_t thread_map[1024] = {0};
-    static volatile int active_flags[1024] = {0};
 
     while (keep_running) {
         // Receive a message from the queue
@@ -373,124 +462,42 @@ void* message_queue_monitor(void* arg) {
             }
 
             if (msg.cmd_type == MC_CREATE) {
-                if (thread_map[msg.suid] != 0) {
-                    if( verbosity_mode >= 2 ) {
-                        printf("Shared Memory ID %d is already being monitored.\n", msg.suid);
-                    }
+                // Create a thread to monitor the shared_memory
+                shared_memory_arg* shm_arg = (shared_memory_arg *)(malloc(sizeof(shared_memory_arg)));
+
+                slist = search_ssm_zenoh_list( msg.name, msg.suid );
+                if( !slist ) {
+                    shm_arg->slist = add_ssm_zenoh_list( ipv4_address, msg.name, msg.suid, 0, 0, 0, 0, 0 );
+                } else {
+                    printf("Shared Memory ID %d is already being monitored.\n", msg.suid);
                     continue;
                 }
-                // Create a thread to monitor the shared_memory
-                shared_memory_arg* sem_arg = (shared_memory_arg *)(malloc(sizeof(shared_memory_arg)));
-                sem_arg->suid = msg.suid;
-                strncpy( sem_arg->name, msg.name, SSM_SNAME_MAX );
-                sem_arg->callback = shared_memory_callback;
-                sem_arg->active = (volatile int*)malloc(sizeof(int));
-                *(sem_arg->active) = 1;
-                sem_arg->z_context = z_context;
-                slist = search_ssm_zenoh_list( sem_arg->name, sem_arg->suid );
-                if( !slist ) {
-                    sem_arg->slist = add_ssm_zenoh_list( NULL, sem_arg->name, sem_arg->suid, 0, 0, 0, 0 );
-                }
 
-                if (pthread_create(&thread, NULL, shared_memory_monitor, sem_arg) != 0) {
+                shm_arg->suid = msg.suid;
+                strncpy( shm_arg->name, msg.name, SSM_SNAME_MAX );
+                shm_arg->callback = shared_memory_callback;
+                shm_arg->z_context = z_context;
+
+                if (pthread_create(&thread, NULL, shared_memory_monitor, shm_arg) != 0) {
                     if( verbosity_mode >= 1 ) {
                         printf("Error: Could not create thread");
                     }
-                    free((int*)sem_arg->active);
-                    free(sem_arg);
+                    free(shm_arg);
                 } else {
                     pthread_detach(thread); // Detach the thread to run in the background
-                    thread_map[msg.suid] = thread;
-                    active_flags[msg.suid] = *(sem_arg->active);
+                    shm_arg->slist->active = 1;
+                    shm_arg->slist->thread = thread;
                 }
             } else if (msg.cmd_type == MC_STREAM_PROPERTY_SET) {
                 slist = search_ssm_zenoh_list( msg.name, msg.suid );
-
-                if (!slist) {
-                    if( verbosity_mode >= 2 ) {
-                        printf("shm not created yet");
-                    }
-                } else if (slist->extern_node == 1) {
-                    continue;
-                }
-
-                char property[msg.ssize];
-                if (get_propertySSM(msg.name, msg.suid, property) == 0) {
-                    if( verbosity_mode >= 1 ) {
-                        printf("Error: Failed to get property for shared memory\n");
-                    }
-                    continue;
-                }
-
-                char zenoh_property_key[5 + sizeof(msg.name) + sizeof(msg.suid)];
-                if (snprintf(zenoh_property_key, sizeof(zenoh_property_key), "prop/%s/%d;", msg.name, msg.suid) < 0) {
-                    if( verbosity_mode >= 1 ) {
-                        printf("Error: Failed to format Zenoh key for property: %s, %d\n", msg.name, msg.suid);
-                    }
-                    continue;
-                }
-
-                z_view_keyexpr_t property_pub_key;
-                if (z_view_keyexpr_from_str(&property_pub_key, zenoh_property_key) < 0) {
-                    if( verbosity_mode >= 1 ) {
-                        printf("Error: Failed to create Zenoh key expression from key: %s\n", zenoh_property_key);
-                    }
-                    continue;
-                }
-
-                z_put_options_t property_options;
-                z_put_options_default(&property_options);
-                z_owned_bytes_t pub_property_attachment;
-                if (z_bytes_copy_from_str(&pub_property_attachment, ipv4_address) < 0) {
-                    if( verbosity_mode >= 1 ) {
-                        printf("Error: Failed to create Zenoh options from attachment: %s\n", ipv4_address);
-                    }
-                    continue;
-                }
-                property_options.attachment = z_move(pub_property_attachment);
-
-                // Create a Zenoh payload from the current shared memory content
-                z_owned_bytes_t b_property_size, b_property;
-                z_bytes_copy_from_buf(&b_property_size, (uint8_t*) &msg.ssize, sizeof(size_t));
-                z_bytes_copy_from_buf(&b_property, (uint8_t*) property, sizeof(property));
-
-                z_owned_bytes_writer_t property_writer;
-                z_bytes_writer_empty(&property_writer);
-                if (z_bytes_writer_append(z_loan_mut(property_writer), z_move(b_property_size)) < 0) {
-                    if( verbosity_mode >= 1 ) {
-                        printf("Error: Failed z_bytes_writer_append\n");
-                    }
-                    continue;
-                }
-                if (z_bytes_writer_append(z_loan_mut(property_writer), z_move(b_property)) < 0) {
-                    if( verbosity_mode >= 1 ) {
-                        printf("Error: Failed z_bytes_writer_append\n");
-                    }
-                    continue;
-                }
-
-                z_owned_bytes_t pub_property_payload;
-                z_bytes_writer_finish(z_move(property_writer), &pub_property_payload);
-
-                if (z_put(z_loan(z_context->session), z_loan(property_pub_key), z_move(pub_property_payload), &property_options) < 0) {
-                    if( verbosity_mode >= 1 ) {
-                        printf("Error: Failed put property\n");
-                    }
-                } else {
-                    if( verbosity_mode >= 2 ) {
-                        printf("Stream property set successfully.\n");
-                    }
-                }
-                z_drop(z_move(pub_property_payload));
-                z_drop(z_move(b_property_size));
-                z_drop(z_move(b_property));
-                z_drop(z_move(property_writer));
-                z_drop(z_move(pub_property_attachment));
+                property_msg_handler(msg, z_context, slist);
             } else if (msg.cmd_type == MC_DESTROY) {
+                slist = search_ssm_zenoh_list( msg.name, msg.suid );
                 // Stop the corresponding thread
-                if (thread_map[msg.suid] != 0) {
-                    active_flags[msg.suid] = 0; // Signal the thread to stop
-                    thread_map[msg.suid] = 0;
+                if (slist->active != 0) {
+                    slist->active = 0; // Signal the thread to stop
+                    pthread_join(slist->thread, NULL);
+                    free_ssm_zenoh_list(slist);
                     if( verbosity_mode >= 2 ) {
                         printf("Thread monitoring shared memory %d stopped.\n", msg.suid);
                     }
@@ -534,7 +541,7 @@ void data_handler(z_loaned_sample_t* data_sample, void* arg) {
     z_owned_string_t sub_attachment_string;
     z_bytes_to_string(sub_attachment, &sub_attachment_string);
 
-    if (sscanf(z_string_data(z_loan(sub_attachment_string)), "%[^;];%d;%ld;%d;%lf", ipv4_zenoh_address, &ssm_zenoh_tid_top, &ssm_zenoh_size, &ssm_zenoh_num, &ssm_zenoh_cycle) != 5) {
+    if (sscanf(z_string_data(z_loan(sub_attachment_string)), "%[^;];%d;%ld;%d;%lf;", ipv4_zenoh_address, &ssm_zenoh_tid_top, &ssm_zenoh_size, &ssm_zenoh_num, &ssm_zenoh_cycle) != 5) {
         if( verbosity_mode >= 1 ) {
             printf("Error: Failed to read attachment for attachment string\n");
         }
@@ -575,7 +582,8 @@ void data_handler(z_loaned_sample_t* data_sample, void* arg) {
                 printf("Created new extern Shared Memory name: %s, suid: %d\n", ssm_zenoh_name, ssm_zenoh_suid);
             }
         }
-        slist = add_ssm_zenoh_list( ssm_zenoh_ssm_sid, ssm_zenoh_name, ssm_zenoh_suid, ssm_zenoh_size, ssm_zenoh_num, ssm_zenoh_cycle, 1 );
+        slist = add_ssm_zenoh_list( ipv4_zenoh_address, ssm_zenoh_name, ssm_zenoh_suid, ssm_zenoh_size, ssm_zenoh_num, ssm_zenoh_cycle, 1 , 1);
+        slist->ssmId = ssm_zenoh_ssm_sid;
     }
 
     uint8_t time[sizeof(ssmTimeT)];
