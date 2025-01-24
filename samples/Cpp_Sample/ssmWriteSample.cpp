@@ -50,6 +50,8 @@ int main(int aArgc, char **aArgv)
 	//intSsm.create( センサデータ保持時間(sec), おおよそのデータ更新周期(sec) )
 	if( !intSsm.create( 5.0, 1.0 ) ){return 1;}
 
+	intSsm.setProperty();
+
 	// 安全に終了できるように設定
 	setSigInt();
 
@@ -71,9 +73,6 @@ int main(int aArgc, char **aArgv)
 		//データの書き込み、現在時刻をタイムスタンプに
 		// write(ssmTimeT time) で時間指定書き込み。時間を省略すると現在時刻を書き込む．普通に使う分には何もなしでok
 		intSsm.write();
-
-		if (cnt == 10)
-			intSsm.setProperty();
 
 		printf("NUM = %d\n", intSsm.data.num);
 		printf("TIME = %.7f\n", intSsm.time);
