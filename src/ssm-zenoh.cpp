@@ -25,12 +25,12 @@
 
 using namespace std;
 
-int verbosity_mode = 1;
-const char* zenoh_config_path = NULL;
+int verbosity_mode = 1;                        // Verbose Flag
+const char* zenoh_config_path = NULL;          // Zenoh Config Path
 int msq_id = -1;				                /**< Message queue ID */
-char ipv4_address[NI_MAXHOST] = "";
-pid_t my_pid;
-SSM_Zenoh_List *ssm_zenoh_top = 0;
+char ipv4_address[NI_MAXHOST] = "";            // IPv4 Address of the node
+pid_t my_pid;                                  // Process ID for MSQ response
+SSM_Zenoh_List *ssm_zenoh_top = 0;             // Top Element of the list
 char err_msg[20];
 volatile int keep_running = 1;                 // Flag to control program termination
 
@@ -81,6 +81,7 @@ void list_ip_addresses() {
     freeifaddrs(ifaddr);
 }
 
+// Initialize SSM Zenoh handler
 int ssm_zenoh_ini( void )
 {
     my_pid = getpid();
@@ -88,7 +89,7 @@ int ssm_zenoh_ini( void )
 	if( ( msq_id = msgget( ( key_t ) MSQ_KEY, 0666 ) ) < 0 )
 	{
 	    if( verbosity_mode >= 1 ) {
-	        sprintf( err_msg, "msq open err" );
+	       printf( "msq open err" );
 	    }
 		return 0;
 	}
@@ -98,7 +99,7 @@ int ssm_zenoh_ini( void )
 	if( !opentimeSSM() )
 	{
 	    if( verbosity_mode >= 1 ) {
-	        sprintf( err_msg, "time open err" );
+	        printf( "time open err" );
 	    }
 		return 0;
 	}
@@ -226,11 +227,12 @@ void print_char_bits(const char* str) {
     printf("\n");
 }
 
-// Callback function called when a shared memory is signaled
+// Callback function called when data is written to shared memory
 void shared_memory_callback(zenoh_context* z_context, SSM_Zenoh_List* shm_info) {
     z_publisher_put_options_t options;
     z_publisher_put_options_default(&options);
 
+    // Create Attachment, to send importened Information
     z_owned_bytes_t pub_attachment;
     char pub_attachment_str[sizeof(ipv4_address) + sizeof(shm_info->tid) + sizeof(shm_info->ssize) + sizeof(shm_info->hsize) + sizeof(shm_info->cycle)];
     snprintf(pub_attachment_str, sizeof(pub_attachment_str), "%s;%d;%lu;%d;%f;", ipv4_address, shm_info->tid, shm_info->ssize, shm_info->hsize, shm_info->cycle);
@@ -273,6 +275,7 @@ void shared_memory_callback(zenoh_context* z_context, SSM_Zenoh_List* shm_info) 
     z_owned_bytes_t pub_payload;
     z_bytes_writer_finish(z_move(pub_writer), &pub_payload);
 
+    // publishing the payload to Zenoh
     if (z_publisher_put(z_loan(z_context->pub), z_move(pub_payload), &options) < 0) {
         if( verbosity_mode >= 2 ) {
             printf("Failed to publish data for key\n");
@@ -295,6 +298,7 @@ void* shared_memory_monitor(void* arg) {
     zenoh_context* z_context = shm_arg->z_context;
     SSM_Zenoh_List *slist = shm_arg->slist;
 
+    // Open Shared Memory, to attach to Process
     SSM_sid ssm_sid = openSSM(shm_arg->name, shm_arg->suid, SSM_READ);
     if (ssm_sid == 0) {
         if( verbosity_mode >= 1 ) {
@@ -303,6 +307,7 @@ void* shared_memory_monitor(void* arg) {
         return NULL;
     }
 
+    // Create key expretion name for Zenoh
     char zenoh_key[5 + sizeof(shm_arg->name) + sizeof(shm_arg->suid)];
     if (snprintf(zenoh_key, sizeof(zenoh_key), "data/%s/%d;", shm_arg->name, shm_arg->suid) < 0) {
         if( verbosity_mode >= 1 ) {
@@ -327,6 +332,7 @@ void* shared_memory_monitor(void* arg) {
         return NULL;
     }
 
+    // Get Importend Information for Shared Memory
     z_context->pub = pub;
     slist->ssmId = ssm_sid;
     slist->tid = getTID_top(ssm_sid);
@@ -358,6 +364,7 @@ void* shared_memory_monitor(void* arg) {
     return NULL;
 }
 
+// Funktion to handle chaned property
 void property_msg_handler(ssm_msg msg, zenoh_context* z_context, SSM_Zenoh_List *slist) {
     if (!slist) {
         if (verbosity_mode >= 2) {
@@ -367,6 +374,7 @@ void property_msg_handler(ssm_msg msg, zenoh_context* z_context, SSM_Zenoh_List 
         return;
     }
 
+    // Get property from ssm-coordinator
     char property[msg.ssize];
     if (get_propertySSM(msg.name, msg.suid, property) == 0) {
         if (verbosity_mode >= 1) {
@@ -375,6 +383,7 @@ void property_msg_handler(ssm_msg msg, zenoh_context* z_context, SSM_Zenoh_List 
         return;
     }
 
+    // Create Key Expretion for Property instance
     char zenoh_property_key[5 + sizeof(msg.name) + sizeof(msg.suid)];
     if (snprintf(zenoh_property_key, sizeof(zenoh_property_key), "prop/%s/%d;", msg.name, msg.suid) < 0) {
         if (verbosity_mode >= 1) {
@@ -391,6 +400,7 @@ void property_msg_handler(ssm_msg msg, zenoh_context* z_context, SSM_Zenoh_List 
         return;
     }
 
+    // Set Attachment with importanded information.
     z_put_options_t property_options;
     z_put_options_default(&property_options);
     z_owned_bytes_t pub_property_attachment;
@@ -402,7 +412,7 @@ void property_msg_handler(ssm_msg msg, zenoh_context* z_context, SSM_Zenoh_List 
     }
     property_options.attachment = z_move(pub_property_attachment);
 
-    // Create a Zenoh payload from the current shared memory content
+    // Create a Zenoh payload from the property value
     z_owned_bytes_t b_property_size, b_property;
     z_bytes_copy_from_buf(&b_property_size, (uint8_t *) &msg.ssize, sizeof(size_t));
     z_bytes_copy_from_buf(&b_property, (uint8_t *) property, sizeof(property));
@@ -425,6 +435,7 @@ void property_msg_handler(ssm_msg msg, zenoh_context* z_context, SSM_Zenoh_List 
     z_owned_bytes_t pub_property_payload;
     z_bytes_writer_finish(z_move(property_writer), &pub_property_payload);
 
+    // Publish property to Zenoh
     if (z_put(z_loan(z_context->session), z_loan(property_pub_key), z_move(pub_property_payload),
               &property_options) < 0) {
         if (verbosity_mode >= 1) {
@@ -489,9 +500,11 @@ void* message_queue_monitor(void* arg) {
                     shm_arg->slist->thread = thread;
                 }
             } else if (msg.cmd_type == MC_STREAM_PROPERTY_SET) {
+                // Set the property of shared memory
                 slist = search_ssm_zenoh_list( msg.name, msg.suid );
                 property_msg_handler(msg, z_context, slist);
             } else if (msg.cmd_type == MC_DESTROY) {
+                // Destroy corresponding shared memory
                 slist = search_ssm_zenoh_list( msg.name, msg.suid );
                 // Stop the corresponding thread
                 if (slist->active != 0) {
@@ -538,9 +551,9 @@ void data_handler(z_loaned_sample_t* data_sample, void* arg) {
     size_t ssm_zenoh_size = 0;
     double ssm_zenoh_cycle = 0;
 
+    // Read Attachment from Zenoh
     z_owned_string_t sub_attachment_string;
     z_bytes_to_string(sub_attachment, &sub_attachment_string);
-
     if (sscanf(z_string_data(z_loan(sub_attachment_string)), "%[^;];%d;%ld;%d;%lf;", ipv4_zenoh_address, &ssm_zenoh_tid_top, &ssm_zenoh_size, &ssm_zenoh_num, &ssm_zenoh_cycle) != 5) {
         if( verbosity_mode >= 1 ) {
             printf("Error: Failed to read attachment for attachment string\n");
@@ -556,10 +569,10 @@ void data_handler(z_loaned_sample_t* data_sample, void* arg) {
         return;
     }
 
+    // Get Name and suid from Topic name
     z_view_string_t sub_key_string;
     z_view_string_empty(&sub_key_string);
     z_keyexpr_as_view_string(z_sample_keyexpr(data_sample), &sub_key_string);
-
     char zenoh_name[SSM_SNAME_MAX];
     int ssm_zenoh_suid = 0;
     if (sscanf(z_string_data(z_loan(sub_key_string)), "data/%[^/]/%d;", zenoh_name, &ssm_zenoh_suid) != 2) {
@@ -574,6 +587,7 @@ void data_handler(z_loaned_sample_t* data_sample, void* arg) {
 
     slist = search_ssm_zenoh_list( ssm_zenoh_name, ssm_zenoh_suid );
 
+    // Search for existing shared memory connection
     if( !slist ) {
         SSM_sid ssm_zenoh_ssm_sid = openSSM(ssm_zenoh_name, ssm_zenoh_suid, SSM_WRITE);
         if (ssm_zenoh_ssm_sid == 0) {
@@ -589,6 +603,7 @@ void data_handler(z_loaned_sample_t* data_sample, void* arg) {
     uint8_t time[sizeof(ssmTimeT)];
     uint8_t data[slist->ssize];
 
+    // Read Data from Zenoh
     z_bytes_reader_t reader = z_bytes_get_reader(z_sample_payload(data_sample));
     z_bytes_reader_read(&reader, time, sizeof(ssmTimeT));
     z_bytes_reader_read(&reader, data, sizeof(data));
@@ -596,6 +611,7 @@ void data_handler(z_loaned_sample_t* data_sample, void* arg) {
     ssmTimeT time_value;
     memcpy(&time_value, &time, sizeof(ssmTimeT));
 
+    // Write Data to Shared Memory
     SSM_tid tid = writeSSM( slist->ssmId, data, time_value );
     if (tid < 0) {
         if( verbosity_mode >= 1 ) {
@@ -635,10 +651,10 @@ void property_handler(z_loaned_sample_t* property_sample, void* arg) {
         return;
     }
 
+    // Get name and suid from correspronding shared memory
     z_view_string_t sub_property_key_string;
     z_view_string_empty(&sub_property_key_string);
     z_keyexpr_as_view_string(z_sample_keyexpr(property_sample), &sub_property_key_string);
-
     char ssm_zenoh_property_name[SSM_SNAME_MAX];
     int ssm_zenoh_property_suid = 0;
     if (sscanf(z_string_data(z_loan(sub_property_key_string)), "prop/%[^/]/%d;", ssm_zenoh_property_name, &ssm_zenoh_property_suid) != 2) {
@@ -661,6 +677,7 @@ void property_handler(z_loaned_sample_t* property_sample, void* arg) {
 
     uint8_t property_size[sizeof(size_t)];
 
+    // Read Property from Zenoh
     z_bytes_reader_t property_reader = z_bytes_get_reader(z_sample_payload(property_sample));
     z_bytes_reader_read(&property_reader, property_size, sizeof(size_t));
     size_t property_size_value;
@@ -669,6 +686,7 @@ void property_handler(z_loaned_sample_t* property_sample, void* arg) {
     uint8_t property[property_size_value];
     z_bytes_reader_read(&property_reader, property, sizeof(property));
 
+    // Set Property on local node
     if (set_propertySSM(ssm_zenoh_property_name, ssm_zenoh_property_suid, property, property_size_value) == 0) {
         if( verbosity_mode >= 1 ) {
             printf("Error: Failed to set property\n");
@@ -688,6 +706,7 @@ void* zenoh_message_monitor(void* arg) {
     zc_init_log_from_env_or("error");
     zenoh_context* z_context = (zenoh_context*)arg;
 
+    // Data Handler
     char sub_data_keyexpr[] = "data/**";
     z_view_keyexpr_t sub_key;
     z_view_keyexpr_from_str_unchecked(&sub_key, sub_data_keyexpr);
@@ -705,6 +724,7 @@ void* zenoh_message_monitor(void* arg) {
         exit(-1);
     }
 
+    // Property Handler
     char sub_property_keyexpr[] = "prop/**";
     z_view_keyexpr_t property_sub_key;
     z_view_keyexpr_from_str_unchecked(&property_sub_key, sub_property_keyexpr);
