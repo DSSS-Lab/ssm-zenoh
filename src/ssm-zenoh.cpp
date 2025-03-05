@@ -324,8 +324,12 @@ void* shared_memory_monitor(void* arg) {
         return NULL;
     }
 
+    z_publisher_options_t pub_options;
+    z_publisher_options_default(&pub_options);
+    pub_options.congestion_control = Z_CONGESTION_CONTROL_DROP;
+
     z_owned_publisher_t pub;
-    if (z_declare_publisher(z_loan(z_context->session), &pub, z_loan(pub_key), NULL) < 0) {
+    if (z_declare_publisher(z_loan(z_context->session), &pub, z_loan(pub_key), &pub_options) < 0) {
         if( verbosity_mode >= 1 ) {
             printf("Error: Unable to declare Publisher for key expression: %s\n", zenoh_key);
         }
@@ -733,7 +737,6 @@ void* zenoh_message_monitor(void* arg) {
 //        printf("Unable to declare subscriber.\n");
 //        exit(-1);
 //    }
-
 
 
     // Property Handler
