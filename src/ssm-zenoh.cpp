@@ -743,7 +743,7 @@ void* zenoh_message_monitor(void* arg) {
     }
 
     while (keep_running) {
-        z_sleep_s(1);
+        z_sleep_ms(1);
     }
 
     z_drop(z_move(data_sub));
