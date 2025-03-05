@@ -327,6 +327,7 @@ void* shared_memory_monitor(void* arg) {
     z_publisher_options_t pub_options;
     z_publisher_options_default(&pub_options);
     pub_options.congestion_control = Z_CONGESTION_CONTROL_DROP;
+    pub_options.is_express = true;
 
     z_owned_publisher_t pub;
     if (z_declare_publisher(z_loan(z_context->session), &pub, z_loan(pub_key), &pub_options) < 0) {
@@ -758,7 +759,7 @@ void* zenoh_message_monitor(void* arg) {
     z_owned_sample_t sample;
     // non-blocking
     while (keep_running) {
-        z_result_t res = z_try_recv(z_loan(handler), &sample);
+        z_result_t res = z_fifo_handler_sample_try_recv(z_loan(handler), &sample);
         if (res == Z_CHANNEL_NODATA) {
             // z_try_recv is non-blocking call, so will fail to return a sample if the Fifo buffer is empty
             // do some other work or just sleep
@@ -767,7 +768,9 @@ void* zenoh_message_monitor(void* arg) {
             // do something with sample
             data_handler(z_loan(sample), NULL);
             z_drop(z_move(sample));
-        }
+        } else { // res == Z_CHANNEL_DISCONNECTED
+    		break; // channel is closed - no more samples will be received
+  		}
     }
 
 //    while (keep_running) {
