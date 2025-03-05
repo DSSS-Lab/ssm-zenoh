@@ -712,7 +712,7 @@ void* zenoh_message_monitor(void* arg) {
     z_view_keyexpr_from_str_unchecked(&sub_key, sub_data_keyexpr);
 
     z_owned_closure_sample_t data_callback;
-    z_closure(&data_callback, data_handler, NULL, NULL);
+    z_closure_sample(&data_callback, data_handler, NULL, NULL);
     if( verbosity_mode >= 2 ) {
         printf("Declaring Subscriber on '%s'...\n", sub_data_keyexpr);
     }
@@ -724,13 +724,25 @@ void* zenoh_message_monitor(void* arg) {
         exit(-1);
     }
 
+    // stream handlers interface
+//    z_owned_fifo_handler_sample_t handler;
+//    z_owned_closure_sample_t closure;
+//    z_fifo_channel_sample_new(&closure, &handler, 16);
+//    z_owned_subscriber_t sub;
+//    if (z_declare_subscriber(z_loan(z_context->session), &sub, z_loan(sub_key), z_move(closure), NULL) < 0) {
+//        printf("Unable to declare subscriber.\n");
+//        exit(-1);
+//    }
+
+
+
     // Property Handler
     char sub_property_keyexpr[] = "prop/**";
     z_view_keyexpr_t property_sub_key;
     z_view_keyexpr_from_str_unchecked(&property_sub_key, sub_property_keyexpr);
 
     z_owned_closure_sample_t property_callback;
-    z_closure(&property_callback, property_handler, NULL, NULL);
+    z_closure_sample(&property_callback, property_handler, NULL, NULL);
     if( verbosity_mode >= 2 ) {
         printf("Declaring Subscriber on '%s'...\n", sub_property_keyexpr);
     }
@@ -854,7 +866,7 @@ int main(int argc, char **argv) {
     } else {
         z_config_default(&config);
     }
-    zc_config_insert_json5(z_loan_mut(config), "session", "{ reader_threads: 4, max_queue_size: 10 }");
+
     z_owned_session_t session;
     if (z_open(&session, z_move(config), NULL) < 0) {
         if( verbosity_mode >= 1 ) {
