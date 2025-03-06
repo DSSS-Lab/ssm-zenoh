@@ -877,16 +877,20 @@ int main(int argc, char **argv) {
     if( !ssm_zenoh_ini(  ) || !initSSM() )
 		return -1;
 
-//    // Configure Zenoh session
-//    z_owned_config_t config;
-//    if (zenoh_config_path != NULL) {
-//        if (zc_config_from_file(&config, zenoh_config_path) < 0) {
-//            printf( "Error: Unable to load config file %s\n", zenoh_config_path );
-//            exit(1);
-//        }
-//    } else {
-//        z_config_default(&config);
-//    }
+    z_owned_config_t pub_config;
+    z_owned_config_t sub_config;
+
+    // Configure Zenoh session
+    //z_owned_config_t config;
+    if (zenoh_config_path != NULL) {
+        if (zc_config_from_file(&pub_config, zenoh_config_path) < 0 || zc_config_from_file(&sub_config, zenoh_config_path) < 0) {
+            printf( "Error: Unable to load config file %s\n", zenoh_config_path );
+            exit(1);
+        }
+    } else {
+        z_config_default(&pub_config);
+        z_config_default(&sub_config);
+    }
 //    z_owned_session_t session;
 //    if (z_open(&session, z_move(config), NULL) < 0) {
 //        if( verbosity_mode >= 1 ) {
@@ -916,8 +920,6 @@ int main(int argc, char **argv) {
 //        exit(1);
 //    }
 
-    z_owned_config_t pub_config;
-    z_config_default(&pub_config);
     z_owned_session_t pub_session;
     if (z_open(&pub_session, z_move(pub_config), NULL) < 0) {
         if( verbosity_mode >= 1 ) {
@@ -938,8 +940,6 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    z_owned_config_t sub_config;
-    z_config_default(&sub_config);
     z_owned_session_t sub_session;
     if (z_open(&sub_session, z_move(sub_config), NULL) < 0) {
         if( verbosity_mode >= 1 ) {
