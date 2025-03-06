@@ -876,52 +876,98 @@ int main(int argc, char **argv) {
     if( !ssm_zenoh_ini(  ) || !initSSM() )
 		return -1;
 
-    // Configure Zenoh session
-    z_owned_config_t config;
-    if (zenoh_config_path != NULL) {
-        if (zc_config_from_file(&config, zenoh_config_path) < 0) {
-            printf( "Error: Unable to load config file %s\n", zenoh_config_path );
-            exit(1);
-        }
-    } else {
-        z_config_default(&config);
-    }
+//    // Configure Zenoh session
+//    z_owned_config_t config;
+//    if (zenoh_config_path != NULL) {
+//        if (zc_config_from_file(&config, zenoh_config_path) < 0) {
+//            printf( "Error: Unable to load config file %s\n", zenoh_config_path );
+//            exit(1);
+//        }
+//    } else {
+//        z_config_default(&config);
+//    }
+//    z_owned_session_t session;
+//    if (z_open(&session, z_move(config), NULL) < 0) {
+//        if( verbosity_mode >= 1 ) {
+//            printf("Unable to open Zenoh session!\n");
+//        }
+//        exit(1);
+//    }
+//
+//    zenoh_context z_context;
+//    z_context.session = session;
+//
+//    // Start the message queue monitoring thread
+//    pthread_t msg_thread;
+//    if (pthread_create(&msg_thread, NULL, message_queue_monitor, &z_context) != 0) {
+//        if( verbosity_mode >= 1 ) {
+//            printf("Error: Failed creating message queue thread");
+//        }
+//        exit(1);
+//    }
+//
+//    // Start the Zenoh message monitoring thread
+//    pthread_t zenoh_thread;
+//    if (pthread_create(&zenoh_thread, NULL, zenoh_message_monitor, &z_context) != 0) {
+//        if( verbosity_mode >= 1 ) {
+//            printf("Error: Failed creating Zenoh message thread");
+//        }
+//        exit(1);
+//    }
 
-    z_owned_session_t session;
-    if (z_open(&session, z_move(config), NULL) < 0) {
+    z_owned_config_t pub_config;
+    z_config_default(&pub_config);
+    z_owned_session_t pub_session;
+    if (z_open(&pub_session, z_move(pub_config), NULL) < 0) {
         if( verbosity_mode >= 1 ) {
             printf("Unable to open Zenoh session!\n");
         }
         exit(1);
     }
 
-    zenoh_context z_context;
-    z_context.session = session;
+    zenoh_context pub_z_context;
+    pub_z_context.session = pub_session;
 
     // Start the message queue monitoring thread
     pthread_t msg_thread;
-    if (pthread_create(&msg_thread, NULL, message_queue_monitor, &z_context) != 0) {
+    if (pthread_create(&msg_thread, NULL, message_queue_monitor, &pub_z_context) != 0) {
         if( verbosity_mode >= 1 ) {
             printf("Error: Failed creating message queue thread");
         }
         exit(1);
     }
 
+    z_owned_config_t sub_config;
+    z_config_default(&sub_config);
+    z_owned_session_t sub_session;
+    if (z_open(&sub_session, z_move(sub_config), NULL) < 0) {
+        if( verbosity_mode >= 1 ) {
+            printf("Unable to open Zenoh session!\n");
+        }
+        exit(1);
+    }
+
+    zenoh_context sub_z_context;
+    sub_z_context.session = sub_session;
+
     // Start the Zenoh message monitoring thread
     pthread_t zenoh_thread;
-    if (pthread_create(&zenoh_thread, NULL, zenoh_message_monitor, &z_context) != 0) {
+    if (pthread_create(&zenoh_thread, NULL, zenoh_message_monitor, &sub_z_context) != 0) {
         if( verbosity_mode >= 1 ) {
             printf("Error: Failed creating Zenoh message thread");
         }
         exit(1);
     }
 
+
     // Wait for the threads to finish
     pthread_join(msg_thread, NULL);
     pthread_join(zenoh_thread, NULL);
 
-    z_drop(z_move(session));
-    z_drop(z_move(config));
+    z_drop(z_move(pub_session));
+    z_drop(z_move(sub_session));
+    z_drop(z_move(pub_config));
+    z_drop(z_move(sub_config));
     endSSM();
 
     return 1;
