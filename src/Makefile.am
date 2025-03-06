@@ -12,7 +12,7 @@ BUILT_SOURCES = build-zenoh
 
 build-zenoh:
 	if [ ! -d $(top_srcdir)/external/zenoh-c/target/release ]; then \
-    	  cargo build --manifest-path $(top_srcdir)/external/zenoh-c/Cargo.toml --release; \
+    	  cargo build --manifest-path $(top_srcdir)/external/zenoh-c/Cargo.toml --release --features=shared-memory --features=unstable; \
     fi
 
 ## libssm

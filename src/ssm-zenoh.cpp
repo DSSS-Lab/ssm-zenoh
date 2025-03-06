@@ -328,6 +328,7 @@ void* shared_memory_monitor(void* arg) {
     z_publisher_options_default(&pub_options);
     pub_options.congestion_control = Z_CONGESTION_CONTROL_DROP;
     pub_options.is_express = true;
+    pub_options.reliability = Z_RELIABILITY_BEST_EFFORT;
 
     z_owned_publisher_t pub;
     if (z_declare_publisher(z_loan(z_context->session), &pub, z_loan(pub_key), &pub_options) < 0) {
