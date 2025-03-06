@@ -324,14 +324,8 @@ void* shared_memory_monitor(void* arg) {
         return NULL;
     }
 
-    z_publisher_options_t pub_options;
-    z_publisher_options_default(&pub_options);
-    pub_options.congestion_control = Z_CONGESTION_CONTROL_DROP;
-    pub_options.is_express = true;
-    pub_options.reliability = Z_RELIABILITY_BEST_EFFORT;
-
     z_owned_publisher_t pub;
-    if (z_declare_publisher(z_loan(z_context->session), &pub, z_loan(pub_key), &pub_options) < 0) {
+    if (z_declare_publisher(z_loan(z_context->session), &pub, z_loan(pub_key), NULL) < 0) {
         if( verbosity_mode >= 1 ) {
             printf("Error: Unable to declare Publisher for key expression: %s\n", zenoh_key);
         }
@@ -539,7 +533,7 @@ void* message_queue_monitor(void* arg) {
 }
 
 // Callback to handle data
-void data_handler(const z_loaned_sample_t* data_sample , void* arg) {
+void data_handler(z_loaned_sample_t* data_sample, void* arg) {
     SSM_Zenoh_List *slist;
     const z_loaned_bytes_t* sub_attachment = z_sample_attachment(data_sample);
 
@@ -706,6 +700,7 @@ void property_handler(z_loaned_sample_t* property_sample, void* arg) {
     z_drop(z_move(attachment_property_string));
 }
 
+
 // Function to monitor Zenoh messages
 void* zenoh_message_monitor(void* arg) {
     zc_init_log_from_env_or("error");
@@ -716,26 +711,16 @@ void* zenoh_message_monitor(void* arg) {
     z_view_keyexpr_t sub_key;
     z_view_keyexpr_from_str_unchecked(&sub_key, sub_data_keyexpr);
 
-//    z_owned_closure_sample_t data_callback;
-//    z_closure_sample(&data_callback, data_handler, NULL, NULL);
-//    if( verbosity_mode >= 2 ) {
-//        printf("Declaring Subscriber on '%s'...\n", sub_data_keyexpr);
-//    }
-//    z_owned_subscriber_t data_sub;
-//    if (z_declare_subscriber(z_loan(z_context->session), &data_sub, z_loan(sub_key), z_move(data_callback), NULL)) {
-//        if( verbosity_mode >= 1 ) {
-//            printf("Error: Unable to declare subscriber for data processing.\n");
-//        }
-//        exit(-1);
-//    }
-
-    // stream handlers interface
-    z_owned_fifo_handler_sample_t handler;
-    z_owned_closure_sample_t closure;
-    z_fifo_channel_sample_new(&closure, &handler, 16);
-    z_owned_subscriber_t sub;
-    if (z_declare_subscriber(z_loan(z_context->session), &sub, z_loan(sub_key), z_move(closure), NULL) < 0) {
-        printf("Unable to declare subscriber.\n");
+    z_owned_closure_sample_t data_callback;
+    z_closure_sample(&data_callback, data_handler, NULL, NULL);
+    if( verbosity_mode >= 2 ) {
+        printf("Declaring Subscriber on '%s'...\n", sub_data_keyexpr);
+    }
+    z_owned_subscriber_t data_sub;
+    if (z_declare_subscriber(z_loan(z_context->session), &data_sub, z_loan(sub_key), z_move(data_callback), NULL)) {
+        if( verbosity_mode >= 1 ) {
+            printf("Error: Unable to declare subscriber for data processing.\n");
+        }
         exit(-1);
     }
 
@@ -757,30 +742,12 @@ void* zenoh_message_monitor(void* arg) {
         exit(-1);
     }
 
-    z_owned_sample_t sample;
-    // non-blocking
     while (keep_running) {
-        z_result_t res = z_fifo_handler_sample_try_recv(z_loan(handler), &sample);
-        if (res == Z_CHANNEL_NODATA) {
-            // z_try_recv is non-blocking call, so will fail to return a sample if the Fifo buffer is empty
-            // do some other work or just sleep
-            z_sleep_ms(1);
-        } else if (res == Z_OK) {
-            // do something with sample
-            data_handler(z_loan(sample), NULL);
-            z_drop(z_move(sample));
-        } else { // res == Z_CHANNEL_DISCONNECTED
-    		break; // channel is closed - no more samples will be received
-  		}
+        z_sleep_s(1);
     }
 
-//    while (keep_running) {
-//        z_sleep_ms(1);
-//    }
-
-//    z_drop(z_move(data_sub));
-    z_drop(z_move(handler));
-    z_drop(z_move(closure));
+    z_drop(z_move(data_sub));
+    z_drop(z_move(data_callback));
     z_drop(z_move(property_sub));
     z_drop(z_move(property_callback));
     return NULL;
@@ -887,7 +854,6 @@ int main(int argc, char **argv) {
     } else {
         z_config_default(&config);
     }
-
     z_owned_session_t session;
     if (z_open(&session, z_move(config), NULL) < 0) {
         if( verbosity_mode >= 1 ) {
